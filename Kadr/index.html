@@ -143,21 +143,51 @@ header .file-btn{min-height:44px;padding:4px 14px;background:var(--panel);color:
 #tabs{gap:8px;padding:0 16px 12px}
 #tabs button{min-height:50px}
 .drawer{max-height:40%;gap:16px;padding:16px 16px 24px}
+
+/* real-player layout: video fills the screen, controls float over it and hide on tap */
+#stage{min-height:200px;border:0}
+#hud{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;pointer-events:none;transition:opacity .2s}
+#hud.off{opacity:0}
+#hud button,#hud input,#hud label{pointer-events:auto}
+#hud.off button,#hud.off input,#hud.off label{pointer-events:none}
+@media (prefers-reduced-motion:reduce){#hud{transition:none}}
+#hudTop{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px 30px;background:linear-gradient(rgba(0,0,0,.82),rgba(0,0,0,0))}
+#hudTop h1{color:#fff;font-size:1.1rem}
+#hud button,#hudTop .file-btn{background:rgba(24,24,26,.84);color:#fff;border:2px solid rgba(255,255,255,.62)}
+#hudTop .file-btn{min-height:44px;padding:4px 14px}
+#hudMid{display:flex;align-items:center;justify-content:center;gap:10px;padding:0 6px}
+#hudMid button{flex:none;width:52px;height:52px;min-height:0;padding:0;gap:0;border-radius:50%;font-size:.75rem;line-height:1.1}
+#hudMid .frame-btn{width:64px;height:64px;border-color:#fff;font-size:.8125rem}
+#hudMid #play{width:78px;height:78px;background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-size:.875rem}
+#hudMid svg{width:22px;height:22px}
+#hudMid .frame-btn svg{width:26px;height:26px}
+#hudMid #play svg{width:32px;height:32px}
+#hudBottom{display:flex;flex-direction:column;gap:2px;padding:40px 14px 10px;background:linear-gradient(rgba(0,0,0,0),rgba(0,0,0,.9) 42%)}
+#readout{color:#fff}
+#readout .dim{color:#e6e6ea}
+#tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:0;margin-top:4px}
+#tabs button{min-height:46px;font-size:.9375rem;padding:4px 2px}
+#hud #tabs button[aria-expanded="true"]{background:#fff;color:#000;border-color:#fff}
+#stage.hud-on #subOverlay{bottom:196px}
+#toast,#zoomBadge{top:66px}
+.drawer{max-height:52%}
+.drawer-head{justify-content:space-between}
+.drawer-head h2{font-size:1.2rem}
+@media (max-height:480px){
+  #hudTop{padding:6px 14px 10px}
+  #hudBottom{padding:14px 14px 6px}
+  #hudMid button{width:48px;height:48px}
+  #hudMid .frame-btn{width:54px;height:54px}
+  #hudMid #play{width:62px;height:62px}
+  #stage.hud-on #subOverlay{bottom:150px}
+}
 </style>
 </head>
 <body>
 
-<header>
-  <h1><svg class="logo" viewBox="0 0 48 48" aria-hidden="true"><rect width="48" height="48" rx="11" fill="#1c1c1e"/><path d="M12.00 9.00L17.50 12.06L17.50 35.94L12.00 39.00z" fill="#ffb627"/><path d="M19.00 12.89L24.50 15.94L24.50 32.06L19.00 35.11z" fill="#ffffff"/><path d="M26.00 16.78L31.50 19.83L31.50 28.17L26.00 31.22z" fill="#ffb627"/><path d="M33.00 20.67L39.00 24.00L33.00 27.33z" fill="#ffb627"/></svg><span lang="en" dir="ltr">Kadr</span></h1>
-  <label class="file-btn" id="openTop" hidden>
-    <span>וידאו אחר</span>
-    <input type="file" id="file" accept="video/*" class="sr-only">
-  </label>
-</header>
-
 <p id="error" role="alert" hidden></p>
 
-<main id="stage" aria-label="אזור הווידאו. צביטה או גלגלת להגדלה, גרירה להזזת התמונה, הקשה כפולה להגדלה מהירה">
+<main id="stage" aria-label="אזור הווידאו. הקשה מציגה או מסתירה את הפקדים, הקשה כפולה בצדדים מדלגת 5 שניות, הקשה כפולה במרכז מגדילה, צביטה להגדלה, גרירה לצדדים לדפדוף">
   <video id="video" playsinline webkit-playsinline preload="auto" aria-label="הווידאו שנבחר"></video>
   <div id="empty">
     <svg class="logo" viewBox="0 0 48 48" aria-hidden="true"><rect width="48" height="48" rx="11" fill="#1c1c1e"/><path d="M12.00 9.00L17.50 12.06L17.50 35.94L12.00 39.00z" fill="#ffb627"/><path d="M19.00 12.89L24.50 15.94L24.50 32.06L19.00 35.11z" fill="#ffffff"/><path d="M26.00 16.78L31.50 19.83L31.50 28.17L26.00 31.22z" fill="#ffb627"/><path d="M33.00 20.67L39.00 24.00L33.00 27.33z" fill="#ffb627"/></svg>
@@ -171,19 +201,16 @@ header .file-btn{min-height:44px;padding:4px 14px;background:var(--panel);color:
   <div id="subOverlay" dir="auto" aria-hidden="true"></div>
   <div id="zoomBadge" aria-hidden="true" hidden>×1.0</div>
   <div id="toast" role="status" aria-live="polite"></div>
-</main>
 
-<section id="core" aria-label="ציר זמן ופקדי ניגון">
-  <div class="ltr">
-    <label for="seek" class="sr-only">מיקום בסרטון</label>
-    <input type="range" id="seek" min="0" max="1" step="0.001" value="0" disabled>
-    <div id="marks" aria-hidden="true"></div>
-  </div>
-  <div id="readout" class="ltr">
-    <span id="timeText">00:00.000 / 00:00.000</span>
-    <span id="frameText" class="dim" dir="rtl">פריים 0</span>
-  </div>
-  <div class="transport ltr">
+  <div id="hud" hidden>
+    <div id="hudTop">
+      <h1><svg class="logo" viewBox="0 0 48 48" aria-hidden="true"><rect width="48" height="48" rx="11" fill="#1c1c1e"/><path d="M12.00 9.00L17.50 12.06L17.50 35.94L12.00 39.00z" fill="#ffb627"/><path d="M19.00 12.89L24.50 15.94L24.50 32.06L19.00 35.11z" fill="#ffffff"/><path d="M26.00 16.78L31.50 19.83L31.50 28.17L26.00 31.22z" fill="#ffb627"/><path d="M33.00 20.67L39.00 24.00L33.00 27.33z" fill="#ffb627"/></svg><span lang="en" dir="ltr">Kadr</span></h1>
+      <label class="file-btn" id="openTop">
+        <span>וידאו אחר</span>
+        <input type="file" id="file" accept="video/*" class="sr-only">
+      </label>
+    </div>
+    <div id="hudMid" class="transport ltr">
     <button type="button" id="back1s" disabled aria-label="שנייה אחורה">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6v12L3 12zM21 6v12l-8-6z"/></svg><span dir="rtl">שנייה</span>
     </button>
@@ -200,14 +227,26 @@ header .file-btn{min-height:44px;padding:4px 14px;background:var(--panel);color:
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 6v12l8-6zM3 6v12l8-6z"/></svg><span dir="rtl">שנייה</span>
     </button>
   </div>
-</section>
-
-<nav id="tabs" aria-label="כלים">
+    <div id="hudBottom">
+      <div id="readout" class="ltr">
+        <span id="timeText" aria-label="זמן נוכחי">00:00.000</span>
+        <span id="frameText" class="dim" dir="rtl">פריים 0</span>
+        <span id="durText" class="dim" aria-label="אורך הסרטון">00:00.000</span>
+      </div>
+      <div class="ltr">
+        <label for="seek" class="sr-only">מיקום בסרטון</label>
+        <input type="range" id="seek" min="0" max="1" step="0.001" value="0" disabled>
+        <div id="marks" aria-hidden="true"></div>
+      </div>
+      <nav id="tabs" aria-label="כלים">
   <button type="button" aria-expanded="false" aria-controls="p-play">ניגון</button>
   <button type="button" aria-expanded="false" aria-controls="p-pic">תמונה</button>
   <button type="button" aria-expanded="false" aria-controls="p-subs">כתוביות</button>
   <button type="button" aria-expanded="false" aria-controls="p-marks">סימניות</button>
 </nav>
+    </div>
+  </div>
+</main>
 
 <!-- ניגון -->
 <section class="drawer" id="p-play" aria-label="ניגון" hidden>
@@ -353,13 +392,32 @@ header .file-btn{min-height:44px;padding:4px 14px;background:var(--panel);color:
   }
 
   /* ---------- drawers ---------- */
+  var hud=$("hud"),hideTimer=null;
+  function kickHud(){clearTimeout(hideTimer);if(!video.paused)hideTimer=setTimeout(function(){if(!video.paused&&!scrubbing)setHud(false);},3500);}
+  function setHud(on){hud.classList.toggle("off",!on);stage.classList.toggle("hud-on",on);if(on)kickHud();else clearTimeout(hideTimer);}
+  function toggleHud(){setHud(hud.classList.contains("off"));}
+  hud.addEventListener("pointerdown",kickHud,true);
+  hud.addEventListener("input",kickHud,true);
+  hud.addEventListener("focusin",function(){setHud(true);});
+  video.addEventListener("play",kickHud);
+  video.addEventListener("pause",function(){setHud(true);});
+
   var tabBtns=Array.prototype.slice.call(document.querySelectorAll("#tabs button"));
+  function closeDrawers(){
+    tabBtns.forEach(function(o){o.setAttribute("aria-expanded","false");$(o.getAttribute("aria-controls")).hidden=true;});
+    requestAnimationFrame(layoutVideo);
+  }
   tabBtns.forEach(function(b){
+    var panel=$(b.getAttribute("aria-controls"));
+    var head=document.createElement("div"),h=document.createElement("h2"),x=document.createElement("button");
+    head.className="row drawer-head";h.textContent=panel.getAttribute("aria-label");
+    x.type="button";x.textContent="סגירה";x.setAttribute("aria-label","סגירת "+h.textContent);
+    x.addEventListener("click",function(){closeDrawers();b.focus();});
+    head.appendChild(h);head.appendChild(x);panel.insertBefore(head,panel.firstChild);
     b.addEventListener("click",function(){
       var open=b.getAttribute("aria-expanded")==="true";
-      tabBtns.forEach(function(o){o.setAttribute("aria-expanded","false");$(o.getAttribute("aria-controls")).hidden=true;});
-      if(!open){b.setAttribute("aria-expanded","true");$(b.getAttribute("aria-controls")).hidden=false;}
-      requestAnimationFrame(layoutVideo);
+      closeDrawers();
+      if(!open){b.setAttribute("aria-expanded","true");panel.hidden=false;}
     });
   });
 
@@ -409,7 +467,7 @@ header .file-btn{min-height:44px;padding:4px 14px;background:var(--panel);color:
     Array.prototype.forEach.call(e.dataTransfer.files,function(f){if(isSubName(f.name))loadSubs(f);else loadVideo(f);});
   });
   video.addEventListener("loadedmetadata",function(){
-    empty.hidden=true;zoomBadge.hidden=false;$("openTop").hidden=false;
+    empty.hidden=true;hud.hidden=false;setHud(true);
     seek.max=video.duration||1;seek.disabled=false;
     needVideo.forEach(function(b){b.disabled=false;});
     video.playbackRate=parseFloat(speedSel.value);
@@ -431,7 +489,7 @@ header .file-btn{min-height:44px;padding:4px 14px;background:var(--panel);color:
   function render(){
     var t=video.currentTime||0,d=video.duration||0,n=frameAt(t);
     if(loopA!==null&&loopB!==null&&!video.paused&&t>=loopB){video.currentTime=loopA;t=loopA;}
-    timeText.textContent=fmt(t)+" / "+fmt(d);
+    timeText.textContent=fmt(t);$("durText").textContent=fmt(d);
     tcText.textContent=timecode(n);
     frameText.textContent="פריים "+(n+1)+"/"+totalFrames();frameText.setAttribute("aria-label","פריים "+(n+1)+" מתוך "+totalFrames());
     if(!scrubbing)seek.value=t;
@@ -632,7 +690,7 @@ header .file-btn{min-height:44px;padding:4px 14px;background:var(--panel);color:
     tx=Math.min(mx,Math.max(-mx,tx));ty=Math.min(my,Math.max(-my,ty));
     video.style.transform="translate(-50%,-50%) translate("+tx+"px,"+ty+"px) scale("+s+") rotate("+rot+"deg) scaleX("+(flip?-1:1)+")";
     var label=(Math.round(s*10)/10).toFixed(1);
-    zoomBadge.textContent="×"+label;zoomRange.value=s;zoomRange.setAttribute("aria-valuetext","פי "+label);
+    zoomBadge.textContent="×"+label;zoomBadge.hidden=s<1.01||!video.duration;zoomRange.value=s;zoomRange.setAttribute("aria-valuetext","פי "+label);
     stage.style.cursor=s>1?"grab":"default";
   }
   function zoomAt(cx,cy,ns){
@@ -662,32 +720,56 @@ header .file-btn{min-height:44px;padding:4px 14px;background:var(--panel);color:
     if(!video.duration)return;e.preventDefault();
     zoomAt(e.clientX,e.clientY,s*(e.deltaY<0?1.12:1/1.12));
   },{passive:false});
-  var pts=new Map(),prevDist=0,prevMid=null,lastTap=0,moved=false;
+  var twoT=0,twoD=0,twoX=0,twoY=0,twoMoved=true;
+  var pts=new Map(),prevDist=0,prevMid=null,lastTap=0,tapTimer=null,moved=false,downX=0,downY=0,swipe=false,swipeT0=0,swipeT=0;
   function midDist(){var a=Array.from(pts.values());return{x:(a[0].x+a[1].x)/2,y:(a[0].y+a[1].y)/2,d:Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y)};}
   stage.addEventListener("pointerdown",function(e){
-    if(!video.duration||e.target.closest("label"))return;
+    if(!video.duration||e.target.closest("label,button,input,select"))return;
     try{stage.setPointerCapture(e.pointerId);}catch(err){}
-    pts.set(e.pointerId,{x:e.clientX,y:e.clientY});moved=false;
-    if(pts.size===2){var m=midDist();prevDist=m.d;prevMid=m;}
+    pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pts.size===1){moved=false;swipe=false;downX=e.clientX;downY=e.clientY;}
+    if(pts.size===2){swipe=false;moved=true;var m=midDist();prevDist=m.d;prevMid=m;twoT=Date.now();twoD=m.d;twoX=m.x;twoY=m.y;twoMoved=false;}
   });
   stage.addEventListener("pointermove",function(e){
     var p=pts.get(e.pointerId);if(!p)return;
     var dx=e.clientX-p.x,dy=e.clientY-p.y;p.x=e.clientX;p.y=e.clientY;
-    if(Math.abs(dx)+Math.abs(dy)>2)moved=true;
-    if(pts.size===1){if(s>1){tx+=dx;ty+=dy;applyTransform();}}
-    else if(pts.size===2){
+    var tdx=e.clientX-downX,tdy=e.clientY-downY;
+    if(Math.hypot(tdx,tdy)>10)moved=true;
+    if(pts.size===1){
+      if(s>1.01){if(moved){tx+=dx;ty+=dy;applyTransform();}}
+      else{
+        /* not zoomed: a sideways drag scrubs through time */
+        if(!swipe&&Math.abs(tdx)>14&&Math.abs(tdx)>Math.abs(tdy)*1.5){swipe=true;swipeT0=video.currentTime;scanToken++;targetFrame=null;}
+        if(swipe){
+          var span=Math.min(video.duration,90);
+          swipeT=Math.min(video.duration,Math.max(0,swipeT0+tdx/stage.clientWidth*span));
+          if(!video.seeking)video.currentTime=swipeT;
+          var d=swipeT-swipeT0;clearTimeout(toastTimer);
+          toast.textContent=(d>=0?"+":"-")+Math.abs(d).toFixed(1)+"s   "+fmt(swipeT);
+        }
+      }
+    }else if(pts.size===2){
       var m=midDist();
-      if(prevDist>0){tx+=m.x-prevMid.x;ty+=m.y-prevMid.y;zoomAt(m.x,m.y,s*m.d/prevDist);}
+      if(Math.abs(m.d-twoD)>14||Math.hypot(m.x-twoX,m.y-twoY)>14)twoMoved=true;
+      if(prevDist>0&&twoMoved){tx+=m.x-prevMid.x;ty+=m.y-prevMid.y;zoomAt(m.x,m.y,s*m.d/prevDist);}
       prevDist=m.d;prevMid=m;
     }
   });
   function endPointer(e){
     if(!pts.has(e.pointerId))return;
-    var single=pts.size===1;pts.delete(e.pointerId);prevDist=0;prevMid=null;
+    var single=pts.size===1,pair=pts.size===2;pts.delete(e.pointerId);prevDist=0;prevMid=null;
+    if(pair&&e.type==="pointerup"&&!twoMoved&&Date.now()-twoT<350){twoMoved=true;togglePlay();say(video.paused?"עצור":"מנגן",700);}
+    if(swipe){swipe=false;video.currentTime=swipeT;toastTimer=setTimeout(function(){toast.textContent="";},700);return;}
     if(e.type==="pointerup"&&single&&!moved){
       var now=Date.now();
-      if(now-lastTap<320){if(s>1.05){tx=0;ty=0;setZoom(1);}else zoomAt(e.clientX,e.clientY,3);lastTap=0;}
-      else lastTap=now;
+      if(now-lastTap<300){
+        clearTimeout(tapTimer);lastTap=0;
+        var r=stage.getBoundingClientRect(),fx=(e.clientX-r.left)/r.width;
+        if(s>1.05){tx=0;ty=0;setZoom(1);}
+        else if(fx<0.33){goTo(video.currentTime-5);say("5 שניות אחורה",900);}
+        else if(fx>0.67){goTo(video.currentTime+5);say("5 שניות קדימה",900);}
+        else zoomAt(e.clientX,e.clientY,3);
+      }else{lastTap=now;tapTimer=setTimeout(toggleHud,300);}
     }
   }
   stage.addEventListener("pointerup",endPointer);stage.addEventListener("pointercancel",endPointer);
