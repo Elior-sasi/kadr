@@ -6,6 +6,8 @@ on:
 jobs:
   build:
     runs-on: macos-15
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Generate Xcode project
@@ -24,3 +26,11 @@ jobs:
         with:
           name: Kadr-unsigned-ipa
           path: Kadr-unsigned.ipa
+      - name: Publish install file to the dist branch
+        run: |
+          mkdir dist && cp Kadr-unsigned.ipa dist/Kadr.ipa && cd dist
+          git init -q -b dist
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Kadr.ipa && git commit -qm "Kadr build ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" dist
