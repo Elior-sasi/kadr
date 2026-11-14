@@ -125,14 +125,32 @@ ul.list .go[aria-current="true"]{border-color:var(--ink);border-inline-start-wid
   #core,#tabs,.drawer{width:100%;max-width:920px;margin-inline:auto}
   .drawer{border:2px solid var(--line);border-bottom:0;border-radius:14px 14px 0 0}
 }
+
+/* roomier phone layout */
+header{min-height:52px;padding:6px 16px}
+.logo{width:32px;height:32px}
+header .file-btn{min-height:44px;padding:4px 14px;background:var(--panel);color:var(--ink);border-color:var(--line)}
+#stage{min-height:200px}
+#empty{gap:16px;overflow:hidden}
+#empty .logo{width:72px;height:72px}
+#core{gap:8px;padding:10px 16px 12px}
+#marks:empty{display:none}
+#readout{flex-wrap:nowrap;align-items:baseline;font-size:1rem}
+#readout .dim{font-size:.9375rem;white-space:nowrap}
+#timeText{white-space:nowrap}
+.transport{gap:10px}
+.transport button{min-height:64px}
+#tabs{gap:8px;padding:0 16px 12px}
+#tabs button{min-height:50px}
+.drawer{max-height:40%;gap:16px;padding:16px 16px 24px}
 </style>
 </head>
 <body>
 
 <header>
   <h1><svg class="logo" viewBox="0 0 48 48" aria-hidden="true"><rect width="48" height="48" rx="11" fill="#1c1c1e"/><path d="M12.00 9.00L17.50 12.06L17.50 35.94L12.00 39.00z" fill="#ffb627"/><path d="M19.00 12.89L24.50 15.94L24.50 32.06L19.00 35.11z" fill="#ffffff"/><path d="M26.00 16.78L31.50 19.83L31.50 28.17L26.00 31.22z" fill="#ffb627"/><path d="M33.00 20.67L39.00 24.00L33.00 27.33z" fill="#ffb627"/></svg><span lang="en" dir="ltr">Kadr</span></h1>
-  <label class="file-btn">
-    <span>פתיחת וידאו</span>
+  <label class="file-btn" id="openTop" hidden>
+    <span>וידאו אחר</span>
     <input type="file" id="file" accept="video/*" class="sr-only">
   </label>
 </header>
@@ -163,7 +181,6 @@ ul.list .go[aria-current="true"]{border-color:var(--ink);border-inline-start-wid
   </div>
   <div id="readout" class="ltr">
     <span id="timeText">00:00.000 / 00:00.000</span>
-    <span id="tcText" class="dim" title="טיימקוד">00:00:00:00</span>
     <span id="frameText" class="dim" dir="rtl">פריים 0</span>
   </div>
   <div class="transport ltr">
@@ -186,14 +203,14 @@ ul.list .go[aria-current="true"]{border-color:var(--ink);border-inline-start-wid
 </section>
 
 <nav id="tabs" aria-label="כלים">
-  <button type="button" aria-expanded="true" aria-controls="p-play">ניגון</button>
+  <button type="button" aria-expanded="false" aria-controls="p-play">ניגון</button>
   <button type="button" aria-expanded="false" aria-controls="p-pic">תמונה</button>
   <button type="button" aria-expanded="false" aria-controls="p-subs">כתוביות</button>
   <button type="button" aria-expanded="false" aria-controls="p-marks">סימניות</button>
 </nav>
 
 <!-- ניגון -->
-<section class="drawer" id="p-play" aria-label="ניגון">
+<section class="drawer" id="p-play" aria-label="ניגון" hidden>
   <div class="grid2">
     <label for="speed">מהירות
       <select id="speed">
@@ -230,6 +247,7 @@ ul.list .go[aria-current="true"]{border-color:var(--ink);border-inline-start-wid
     <input type="text" id="gotoIn" class="grow ltr" inputmode="text" autocomplete="off" placeholder="1:23.500  /  f240">
     <button type="submit">קפוץ</button>
   </form>
+  <p class="note">טיימקוד: <span id="tcText" class="val">00:00:00:00</span></p>
   <div class="row">
     <button type="button" id="copyTime" disabled>העתקת הזמן הנוכחי</button>
     <button type="button" id="mute" aria-pressed="false" disabled>השתקה</button>
@@ -391,7 +409,7 @@ ul.list .go[aria-current="true"]{border-color:var(--ink);border-inline-start-wid
     Array.prototype.forEach.call(e.dataTransfer.files,function(f){if(isSubName(f.name))loadSubs(f);else loadVideo(f);});
   });
   video.addEventListener("loadedmetadata",function(){
-    empty.hidden=true;zoomBadge.hidden=false;
+    empty.hidden=true;zoomBadge.hidden=false;$("openTop").hidden=false;
     seek.max=video.duration||1;seek.disabled=false;
     needVideo.forEach(function(b){b.disabled=false;});
     video.playbackRate=parseFloat(speedSel.value);
@@ -415,7 +433,7 @@ ul.list .go[aria-current="true"]{border-color:var(--ink);border-inline-start-wid
     if(loopA!==null&&loopB!==null&&!video.paused&&t>=loopB){video.currentTime=loopA;t=loopA;}
     timeText.textContent=fmt(t)+" / "+fmt(d);
     tcText.textContent=timecode(n);
-    frameText.textContent="פריים "+(n+1)+" מתוך "+totalFrames();
+    frameText.textContent="פריים "+(n+1)+"/"+totalFrames();frameText.setAttribute("aria-label","פריים "+(n+1)+" מתוך "+totalFrames());
     if(!scrubbing)seek.value=t;
     seek.setAttribute("aria-valuetext",fmt(t));
     renderCue(t);
