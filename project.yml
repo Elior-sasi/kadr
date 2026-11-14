@@ -1,0 +1,42 @@
+name: Kadr
+options:
+  bundleIdPrefix: com.eliorsasi
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  Kadr:
+    type: application
+    platform: iOS
+    sources:
+      - path: Kadr
+    scheme: {}
+    info:
+      path: Kadr/Info.plist
+      properties:
+        CFBundleDisplayName: Kadr
+        CFBundleDevelopmentRegion: he
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        ITSAppUsesNonExemptEncryption: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSPhotoLibraryAddUsageDescription: Kadr שומר פריימים שצילמת מהסרטון לספריית התמונות.
+        NSCameraUsageDescription: Kadr משתמש במצלמה רק אם תבחר לצלם סרטון חדש לפתיחה בנגן.
+        NSMicrophoneUsageDescription: Kadr משתמש במיקרופון רק בזמן צילום סרטון חדש לפתיחה בנגן.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.eliorsasi.kadr
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"

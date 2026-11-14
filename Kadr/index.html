@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kadr</title>
+<style>
+/* Layout idea: one-screen workbench - black stage on top, timeline + transport always visible, four collapsible tool drawers below */
+:root{
+  --bg:#000000;
+  --panel:#1c1c1e;
+  --ink:#ffffff;
+  --muted:#b0b0b8;
+  --line:#48484e;
+  --accent:#ffb627;
+  --accent-ink:#000000;
+  --stage:#000000;
+  --font-body:-apple-system,"SF Pro Text","SF Hebrew","Assistant","Arial Hebrew","Segoe UI",Arial,sans-serif;
+  --font-num:-apple-system,"SF Pro Text","Assistant",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg);color:var(--ink);overflow:hidden;
+  font-family:var(--font-body);font-size:1.0625rem;line-height:1.35;
+  display:flex;flex-direction:column;-webkit-text-size-adjust:100%;
+}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.ltr{direction:ltr}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 16px}
+h1{font-size:1.2rem;font-weight:800;margin:0;display:flex;align-items:center;gap:10px}
+.logo{width:40px;height:40px;flex:none}
+#empty .logo{width:84px;height:84px}
+#stage{border-block:1px solid var(--line)}
+button,select,.file-btn,input[type=text]{
+  font:inherit;font-weight:600;color:var(--ink);
+  background:var(--panel);border:2px solid var(--line);border-radius:14px;
+  min-height:48px;padding:6px 12px;
+}
+button,select,.file-btn{cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink)}
+button[aria-pressed="true"]::before{content:"✓ "}
+.primary,.file-btn{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.file-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.file-btn:focus-within{outline:3px solid var(--ink);outline-offset:3px}
+
+#stage{
+  flex:1 1 0;min-height:150px;position:relative;overflow:hidden;
+  background:var(--stage);touch-action:none;user-select:none;-webkit-user-select:none;
+}
+#video{position:absolute;left:50%;top:50%;object-fit:contain;transform-origin:center center;will-change:transform}
+#empty{
+  position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:12px;padding:20px;text-align:center;color:#f2f4f8;
+}
+#empty p{margin:0;max-width:32ch}
+#empty .file-btn{font-size:1.25rem;min-height:60px;padding:10px 24px}
+#zoomBadge{
+  position:absolute;top:8px;left:8px;direction:ltr;pointer-events:none;
+  background:rgba(0,0,0,.72);color:#fff;border:1px solid rgba(255,255,255,.5);
+  border-radius:8px;padding:2px 10px;font-weight:800;font-variant-numeric:tabular-nums;
+}
+#subOverlay{
+  position:absolute;left:4%;right:4%;bottom:5%;text-align:center;pointer-events:none;
+  color:#fff;font-weight:600;line-height:1.3;white-space:pre-line;font-size:1.25rem;
+}
+#subOverlay span{background:rgba(0,0,0,.7);padding:2px 10px;border-radius:6px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+#toast{
+  position:absolute;top:8px;right:8px;max-width:70%;
+  background:rgba(0,0,0,.82);color:#fff;border:1px solid rgba(255,255,255,.5);
+  border-radius:8px;padding:6px 12px;font-weight:600;pointer-events:none;
+}
+#toast:empty{display:none}
+#error{margin:0;padding:10px 16px;background:var(--panel);border-block:2px solid var(--ink);font-weight:600}
+
+#core{display:flex;flex-direction:column;gap:4px;padding:6px 16px 8px}
+input[type=range]{width:100%;min-height:44px;margin:0;accent-color:var(--accent)}
+#marks{position:relative;height:12px;margin:-6px 10px 0}
+#marks i{position:absolute;top:0;width:0;height:0;margin-left:-6px;border-inline:6px solid transparent;border-bottom:11px solid var(--ink)}
+#marks b{position:absolute;top:3px;height:6px;background:var(--accent);border-inline:2px solid var(--ink)}
+#readout{
+  display:flex;justify-content:space-between;gap:4px 12px;flex-wrap:wrap;
+  font-family:var(--font-num);font-variant-numeric:tabular-nums;font-weight:800;font-size:1.0625rem;
+}
+#readout .dim{color:var(--muted)}
+.transport{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.transport button{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+  min-height:60px;padding:4px 2px;font-size:.9375rem;line-height:1.15;
+}
+.transport svg{width:26px;height:26px;fill:currentColor}
+.frame-btn{border-color:var(--ink)}
+
+#tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:0 16px 8px}
+#tabs button{padding:6px 2px;font-size:1rem}
+#tabs button[aria-expanded="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.drawer{
+  flex:0 1 auto;max-height:42%;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding:12px 16px 16px;background:var(--panel);border-top:2px solid var(--line);
+  display:flex;flex-direction:column;gap:12px;
+}
+.drawer h2{font-size:1.0625rem;margin:0;font-weight:800}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.row > label{font-weight:600}
+.row .grow{flex:1 1 120px;min-width:0}
+.sq{min-width:48px;font-size:1.4rem;line-height:1;padding:0}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid2 label,.stack{display:flex;flex-direction:column;gap:2px;font-weight:600;font-size:.9375rem}
+.grid2 select,.grid2 button{width:100%}
+.note{margin:0;color:var(--muted);font-size:.9375rem}
+.val{font-variant-numeric:tabular-nums;font-weight:800;min-width:4.5ch;text-align:center;direction:ltr}
+ul.list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+ul.list li{display:flex;gap:6px;align-items:stretch}
+ul.list .go{flex:1;text-align:start;display:flex;gap:10px;align-items:baseline;min-width:0;font-weight:400}
+ul.list .go time{font-family:var(--font-num);font-variant-numeric:tabular-nums;font-weight:800;direction:ltr;flex:none}
+ul.list .go span{white-space:pre-line;overflow-wrap:anywhere}
+ul.list .go[aria-current="true"]{border-color:var(--ink);border-inline-start-width:10px;font-weight:800}
+#cueList{max-height:260px;overflow-y:auto}
+#snapWrap img{max-width:100%;border:2px solid var(--line);border-radius:8px;display:block}
+@media (min-width:820px){
+  #core,#tabs,.drawer{width:100%;max-width:920px;margin-inline:auto}
+  .drawer{border:2px solid var(--line);border-bottom:0;border-radius:14px 14px 0 0}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><svg class="logo" viewBox="0 0 48 48" aria-hidden="true"><rect width="48" height="48" rx="11" fill="#1c1c1e"/><path d="M12 9.2h5.5v29.6H12z" fill="#ffb627"/><path d="M19 13.1l5.5 3.05v15.7L19 34.9z" fill="#ffffff"/><path d="M26 17l5.5 3.05v7.9L26 31z" fill="#ffb627"/><path d="M33 20.9L38.6 24 33 27.1z" fill="#ffb627"/></svg><span lang="en" dir="ltr">Kadr</span></h1>
+  <label class="file-btn">
+    <span>פתיחת וידאו</span>
+    <input type="file" id="file" accept="video/*" class="sr-only">
+  </label>
+</header>
+
+<p id="error" role="alert" hidden></p>
+
+<main id="stage" aria-label="אזור הווידאו. צביטה או גלגלת להגדלה, גרירה להזזת התמונה, הקשה כפולה להגדלה מהירה">
+  <video id="video" playsinline webkit-playsinline preload="auto" aria-label="הווידאו שנבחר"></video>
+  <div id="empty">
+    <svg class="logo" viewBox="0 0 48 48" aria-hidden="true"><rect width="48" height="48" rx="11" fill="#1c1c1e"/><path d="M12 9.2h5.5v29.6H12z" fill="#ffb627"/><path d="M19 13.1l5.5 3.05v15.7L19 34.9z" fill="#ffffff"/><path d="M26 17l5.5 3.05v7.9L26 31z" fill="#ffb627"/><path d="M33 20.9L38.6 24 33 27.1z" fill="#ffb627"/></svg>
+    <p>הגדלה עד פי 16, מעבר פריים-פריים, כתוביות, סימניות, לולאה וקפיצה לחיתוך הבא.</p>
+    <label class="file-btn">
+      <span>פתיחת וידאו</span>
+      <input type="file" id="file2" accept="video/*" class="sr-only">
+    </label>
+    <p>הסרטון נשאר במכשיר ולא נשלח לשום מקום.</p>
+  </div>
+  <div id="subOverlay" dir="auto" aria-hidden="true"></div>
+  <div id="zoomBadge" aria-hidden="true" hidden>×1.0</div>
+  <div id="toast" role="status" aria-live="polite"></div>
+</main>
+
+<section id="core" aria-label="ציר זמן ופקדי ניגון">
+  <div class="ltr">
+    <label for="seek" class="sr-only">מיקום בסרטון</label>
+    <input type="range" id="seek" min="0" max="1" step="0.001" value="0" disabled>
+    <div id="marks" aria-hidden="true"></div>
+  </div>
+  <div id="readout" class="ltr">
+    <span id="timeText">00:00.000 / 00:00.000</span>
+    <span id="tcText" class="dim" title="טיימקוד">00:00:00:00</span>
+    <span id="frameText" class="dim" dir="rtl">פריים 0</span>
+  </div>
+  <div class="transport ltr">
+    <button type="button" id="back1s" disabled aria-label="שנייה אחורה">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6v12L3 12zM21 6v12l-8-6z"/></svg><span dir="rtl">שנייה</span>
+    </button>
+    <button type="button" id="prevF" class="frame-btn" disabled aria-label="פריים אחד אחורה">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h3v14H6zM20 5v14l-9-7z"/></svg><span dir="rtl">פריים</span>
+    </button>
+    <button type="button" id="play" class="primary" disabled aria-label="נגן">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path id="playIcon" d="M7 4v16l13-8z"/></svg><span id="playText" dir="rtl">נגן</span>
+    </button>
+    <button type="button" id="nextF" class="frame-btn" disabled aria-label="פריים אחד קדימה">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5h3v14h-3zM4 5v14l9-7z"/></svg><span dir="rtl">פריים</span>
+    </button>
+    <button type="button" id="fwd1s" disabled aria-label="שנייה קדימה">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 6v12l8-6zM3 6v12l8-6z"/></svg><span dir="rtl">שנייה</span>
+    </button>
+  </div>
+</section>
+
+<nav id="tabs" aria-label="כלים">
+  <button type="button" aria-expanded="true" aria-controls="p-play">ניגון</button>
+  <button type="button" aria-expanded="false" aria-controls="p-pic">תמונה</button>
+  <button type="button" aria-expanded="false" aria-controls="p-subs">כתוביות</button>
+  <button type="button" aria-expanded="false" aria-controls="p-marks">סימניות</button>
+</nav>
+
+<!-- ניגון -->
+<section class="drawer" id="p-play" aria-label="ניגון">
+  <div class="grid2">
+    <label for="speed">מהירות
+      <select id="speed">
+        <option value="0.1">0.1×</option><option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+        <option value="0.75">0.75×</option><option value="1" selected>1× (רגיל)</option>
+        <option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="4">4×</option>
+      </select>
+    </label>
+    <label for="fps">פריימים לשנייה
+      <select id="fps">
+        <option value="auto" selected>אוטומטי - 30</option>
+        <option>23.976</option><option>24</option><option>25</option><option>29.97</option><option>30</option>
+        <option>50</option><option>59.94</option><option>60</option><option>120</option><option>240</option>
+      </select>
+    </label>
+  </div>
+  <div class="grid2">
+    <button type="button" id="cutPrev" disabled>חיתוך קודם</button>
+    <button type="button" id="cutNext" disabled>חיתוך הבא</button>
+  </div>
+  <p class="note">חיפוש חיתוך סורק עד דקה ומזהה מעבר חד בין שוטים. ניסיוני - מעברים רכים עלולים להתפספס.</p>
+
+  <h2>לולאה בין שתי נקודות</h2>
+  <div class="row">
+    <button type="button" id="loopA" disabled>התחלה כאן</button>
+    <button type="button" id="loopB" disabled>סוף כאן</button>
+    <button type="button" id="loopClear" disabled>ביטול לולאה</button>
+  </div>
+  <p class="note" id="loopText">אין לולאה פעילה.</p>
+
+  <h2>קפיצה לזמן או לפריים</h2>
+  <form class="row" id="gotoForm">
+    <label for="gotoIn" class="sr-only">זמן או מספר פריים</label>
+    <input type="text" id="gotoIn" class="grow ltr" inputmode="text" autocomplete="off" placeholder="1:23.500  /  f240">
+    <button type="submit">קפוץ</button>
+  </form>
+  <div class="row">
+    <button type="button" id="copyTime" disabled>העתקת הזמן הנוכחי</button>
+    <button type="button" id="mute" aria-pressed="false" disabled>השתקה</button>
+  </div>
+  <div class="row" id="volRow">
+    <label for="vol">עוצמה</label>
+    <input type="range" id="vol" class="grow ltr" min="0" max="1" step="0.05" value="1">
+  </div>
+</section>
+
+<!-- תמונה -->
+<section class="drawer" id="p-pic" aria-label="תמונה" hidden>
+  <div class="row">
+    <label for="zoom">הגדלה</label>
+    <button type="button" id="zoomOut" class="sq" aria-label="הקטן">-</button>
+    <input type="range" id="zoom" class="grow ltr" min="1" max="16" step="0.1" value="1">
+    <button type="button" id="zoomIn" class="sq" aria-label="הגדל">+</button>
+    <button type="button" id="zoomReset">איפוס</button>
+  </div>
+  <div class="grid2">
+    <button type="button" id="rotate">סיבוב 90°</button>
+    <button type="button" id="flip" aria-pressed="false">היפוך מראה</button>
+  </div>
+  <div class="row"><label for="fBright">בהירות</label><input type="range" id="fBright" class="grow ltr" min="30" max="300" value="100"><span class="val" id="vBright">100%</span></div>
+  <div class="row"><label for="fContrast">ניגודיות</label><input type="range" id="fContrast" class="grow ltr" min="30" max="300" value="100"><span class="val" id="vContrast">100%</span></div>
+  <div class="row"><label for="fSat">רוויה</label><input type="range" id="fSat" class="grow ltr" min="0" max="300" value="100"><span class="val" id="vSat">100%</span></div>
+  <div class="grid2">
+    <button type="button" id="fReset">איפוס תמונה</button>
+    <button type="button" id="snap" disabled>צילום הפריים</button>
+  </div>
+  <div id="snapWrap" class="stack" hidden>
+    <img id="snapImg" alt="הפריים שצולם">
+    <div class="row">
+      <button type="button" id="snapSave" hidden>שמירת התמונה</button>
+      <span class="note" id="snapHint">לחיצה ארוכה על התמונה שומרת אותה.</span>
+    </div>
+  </div>
+</section>
+
+<!-- כתוביות -->
+<section class="drawer" id="p-subs" aria-label="כתוביות" hidden>
+  <div class="row">
+    <label class="file-btn">
+      <span>טעינת קובץ כתוביות</span>
+      <input type="file" id="subFile" class="sr-only">
+    </label>
+    <button type="button" id="subShow" aria-pressed="true">הצגה על הווידאו</button>
+  </div>
+  <p class="note" id="subInfo">נתמכים SRT, VTT ו-ASS, כולל קבצים ישנים בקידוד עברית של חלונות.</p>
+  <div class="grid2">
+    <button type="button" id="cuePrev" disabled>כתובית קודמת</button>
+    <button type="button" id="cueNext" disabled>כתובית הבאה</button>
+  </div>
+  <div class="row">
+    <span id="offLabel" style="font-weight:600">היסט תזמון</span>
+    <button type="button" id="offMinus" class="sq" aria-label="הקדם כתוביות בעשירית שנייה">-</button>
+    <span class="val" id="offVal" aria-live="polite" aria-labelledby="offLabel">0.0s</span>
+    <button type="button" id="offPlus" class="sq" aria-label="אחר כתוביות בעשירית שנייה">+</button>
+    <button type="button" id="offZero">איפוס</button>
+  </div>
+  <div class="row">
+    <label for="subSize">גודל טקסט</label>
+    <input type="range" id="subSize" class="grow ltr" min="0.8" max="3" step="0.1" value="1.25">
+  </div>
+  <ul class="list" id="cueList" aria-label="רשימת הכתוביות"></ul>
+</section>
+
+<!-- סימניות -->
+<section class="drawer" id="p-marks" aria-label="סימניות" hidden>
+  <div class="row">
+    <button type="button" id="markAdd" class="primary" disabled>סימנייה כאן</button>
+    <button type="button" id="markCopy" disabled>העתקת הרשימה</button>
+  </div>
+  <p class="note" id="markNote">סימניות נשמרות במכשיר לפי שם הקובץ, יחד עם המקום שבו עצרת.</p>
+  <ul class="list" id="markList" aria-label="רשימת הסימניות"></ul>
+</section>
+
+<script>
+(function(){
+  "use strict";
+  var $=function(id){return document.getElementById(id);};
+  var video=$("video"),stage=$("stage"),empty=$("empty"),errorBox=$("error"),toast=$("toast");
+  var seek=$("seek"),marksBar=$("marks"),timeText=$("timeText"),tcText=$("tcText"),frameText=$("frameText");
+  var playBtn=$("play"),playIcon=$("playIcon"),playText=$("playText");
+  var zoomRange=$("zoom"),zoomBadge=$("zoomBadge"),fpsSel=$("fps"),speedSel=$("speed");
+  var subOverlay=$("subOverlay"),cueList=$("cueList"),markList=$("markList");
+  var needVideo=["back1s","prevF","play","nextF","fwd1s","cutPrev","cutNext","loopA","loopB","copyTime","mute","snap","markAdd"].map($);
+
+  var detectedFps=null,fps=30,objectUrl=null,scrubbing=false,targetFrame=null,fileKey=null;
+  var s=1,tx=0,ty=0,rot=0,flip=false;
+  var cues=[],subOffset=0,showSubs=true,curCue=-1;
+  var marks=[],loopA=null,loopB=null,scanToken=0,snapBlob=null;
+
+  var store={
+    get:function(k){try{return JSON.parse(localStorage.getItem(k));}catch(e){return null;}},
+    set:function(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
+  };
+  var toastTimer=null;
+  function say(msg,ms){
+    toast.textContent="";clearTimeout(toastTimer);
+    setTimeout(function(){toast.textContent=msg;},30);
+    toastTimer=setTimeout(function(){toast.textContent="";},ms||2200);
+  }
+
+  /* ---------- drawers ---------- */
+  var tabBtns=Array.prototype.slice.call(document.querySelectorAll("#tabs button"));
+  tabBtns.forEach(function(b){
+    b.addEventListener("click",function(){
+      var open=b.getAttribute("aria-expanded")==="true";
+      tabBtns.forEach(function(o){o.setAttribute("aria-expanded","false");$(o.getAttribute("aria-controls")).hidden=true;});
+      if(!open){b.setAttribute("aria-expanded","true");$(b.getAttribute("aria-controls")).hidden=false;}
+      requestAnimationFrame(layoutVideo);
+    });
+  });
+
+  /* ---------- formatting ---------- */
+  function pad(n,l){n=String(n);while(n.length<l)n="0"+n;return n;}
+  function fmt(t){
+    if(!isFinite(t)||t<0)t=0;
+    var ms=Math.round(t*1000),h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000),sec=Math.floor(ms%60000/1000);
+    return (h?h+":":"")+pad(m,2)+":"+pad(sec,2)+"."+pad(ms%1000,3);
+  }
+  function srtTime(t){
+    var ms=Math.max(0,Math.round(t*1000));
+    return pad(Math.floor(ms/3600000),2)+":"+pad(Math.floor(ms%3600000/60000),2)+":"+pad(Math.floor(ms%60000/1000),2)+","+pad(ms%1000,3);
+  }
+  function frameAt(t){return Math.floor(t*fps+0.001);}
+  function frameMid(n){return Math.min(video.duration||0,(n+0.5)/fps);}
+  function totalFrames(){return Math.max(1,Math.floor((video.duration||0)*fps+0.001));}
+  function timecode(n){
+    var r=Math.max(1,Math.round(fps)),sec=Math.floor(n/r);
+    return pad(Math.floor(sec/3600),2)+":"+pad(Math.floor(sec%3600/60),2)+":"+pad(sec%60,2)+":"+pad(n%r,2);
+  }
+
+  /* ---------- loading ---------- */
+  function isSubName(n){return /\.(srt|vtt|ass|ssa|sub|txt)$/i.test(n);}
+  function loadVideo(f){
+    if(!f)return;
+    saveState();
+    errorBox.hidden=true;scanToken++;
+    if(objectUrl)URL.revokeObjectURL(objectUrl);
+    objectUrl=URL.createObjectURL(f);
+    fileKey="fp:"+f.name+":"+f.size;
+    detectedFps=null;diffs=[];lastMediaTime=null;targetFrame=null;loopA=loopB=null;
+    var saved=store.get(fileKey)||{};
+    marks=Array.isArray(saved.marks)?saved.marks:[];
+    resumeAt=typeof saved.t==="number"?saved.t:0;
+    updateAutoLabel();applyFps();
+    video.src=objectUrl;video.load();
+    s=1;tx=0;ty=0;applyTransform();renderMarks();renderLoop();
+  }
+  var resumeAt=0;
+  function pick(e){var f=e.target.files[0];e.target.value="";if(!f)return;if(isSubName(f.name))loadSubs(f);else loadVideo(f);}
+  $("file").addEventListener("change",pick);$("file2").addEventListener("change",pick);
+  $("subFile").addEventListener("change",function(e){var f=e.target.files[0];e.target.value="";if(f)loadSubs(f);});
+  document.addEventListener("dragover",function(e){e.preventDefault();});
+  document.addEventListener("drop",function(e){
+    e.preventDefault();
+    Array.prototype.forEach.call(e.dataTransfer.files,function(f){if(isSubName(f.name))loadSubs(f);else loadVideo(f);});
+  });
+  video.addEventListener("loadedmetadata",function(){
+    empty.hidden=true;zoomBadge.hidden=false;
+    seek.max=video.duration||1;seek.disabled=false;
+    needVideo.forEach(function(b){b.disabled=false;});
+    video.playbackRate=parseFloat(speedSel.value);
+    layoutVideo();
+    if(resumeAt>1&&resumeAt<video.duration-1){video.currentTime=resumeAt;say("ממשיך מהמקום שבו עצרת");}
+    else say("הסרטון נטען");
+    render();renderMarks();updateSubButtons();
+  });
+  video.addEventListener("error",function(){
+    if(!video.getAttribute("src"))return;
+    errorBox.textContent="לא הצלחתי לפתוח את הקובץ הזה. כדאי לנסות סרטון בפורמט MP4 או MOV.";
+    errorBox.hidden=false;
+  });
+  function saveState(){if(fileKey&&video.duration)store.set(fileKey,{t:video.currentTime,marks:marks});}
+  setInterval(saveState,5000);
+  document.addEventListener("visibilitychange",saveState);
+
+  /* ---------- readout ---------- */
+  function render(){
+    var t=video.currentTime||0,d=video.duration||0,n=frameAt(t);
+    if(loopA!==null&&loopB!==null&&!video.paused&&t>=loopB){video.currentTime=loopA;t=loopA;}
+    timeText.textContent=fmt(t)+" / "+fmt(d);
+    tcText.textContent=timecode(n);
+    frameText.textContent="פריים "+(n+1)+" מתוך "+totalFrames();
+    if(!scrubbing)seek.value=t;
+    seek.setAttribute("aria-valuetext",fmt(t));
+    renderCue(t);
+  }
+  function loop(){render();if(!video.paused&&!video.ended)requestAnimationFrame(loop);}
+  video.addEventListener("timeupdate",render);
+  video.addEventListener("seeked",render);
+  video.addEventListener("play",function(){targetFrame=null;setPlayUi(true);requestAnimationFrame(loop);});
+  video.addEventListener("pause",function(){setPlayUi(false);render();saveState();});
+  video.addEventListener("ended",function(){setPlayUi(false);});
+  function setPlayUi(p){
+    playIcon.setAttribute("d",p?"M6 4h4v16H6zM14 4h4v16h-4z":"M7 4v16l13-8z");
+    playText.textContent=p?"עצור":"נגן";playBtn.setAttribute("aria-label",p?"עצור":"נגן");
+  }
+
+  /* ---------- transport ---------- */
+  function togglePlay(){
+    scanToken++;
+    if(video.paused||video.ended){var p=video.play();if(p&&p.catch)p.catch(function(){});}else video.pause();
+  }
+  playBtn.addEventListener("click",togglePlay);
+  function stepFrame(dir,announce){
+    if(!video.duration)return;
+    scanToken++;
+    if(!video.paused)video.pause();
+    var base=(targetFrame!==null&&video.seeking)?targetFrame:frameAt(video.currentTime);
+    var n=Math.min(totalFrames()-1,Math.max(0,base+dir));
+    targetFrame=n;video.currentTime=frameMid(n);
+    if(announce)say("פריים "+(n+1),1200);
+  }
+  function goTo(t){
+    if(!video.duration)return;
+    scanToken++;targetFrame=null;
+    video.currentTime=Math.min(video.duration,Math.max(0,t));
+  }
+  function holdable(btn,dir){
+    var delay=null,rep=null,held=false;
+    function stop(){clearTimeout(delay);clearInterval(rep);delay=rep=null;setTimeout(function(){held=false;},80);}
+    btn.addEventListener("pointerdown",function(e){
+      if(btn.disabled||e.button>0)return;
+      held=true;stepFrame(dir,true);
+      delay=setTimeout(function(){rep=setInterval(function(){stepFrame(dir,false);},110);},420);
+    });
+    ["pointerup","pointerleave","pointercancel"].forEach(function(ev){btn.addEventListener(ev,stop);});
+    btn.addEventListener("click",function(){if(held){held=false;return;}stepFrame(dir,true);});
+    btn.addEventListener("contextmenu",function(e){e.preventDefault();});
+  }
+  holdable($("prevF"),-1);holdable($("nextF"),1);
+  $("back1s").addEventListener("click",function(){goTo(video.currentTime-1);});
+  $("fwd1s").addEventListener("click",function(){goTo(video.currentTime+1);});
+  seek.addEventListener("input",function(){scrubbing=true;scanToken++;targetFrame=null;video.currentTime=parseFloat(seek.value);render();});
+  seek.addEventListener("change",function(){scrubbing=false;});
+  speedSel.addEventListener("change",function(){video.playbackRate=parseFloat(speedSel.value);store.set("fp:speed",speedSel.value);});
+  var sv=store.get("fp:speed");if(sv){speedSel.value=sv;if(!speedSel.value)speedSel.value="1";}
+
+  /* volume */
+  var muteBtn=$("mute"),vol=$("vol");
+  muteBtn.addEventListener("click",function(){video.muted=!video.muted;muteBtn.setAttribute("aria-pressed",String(video.muted));});
+  vol.addEventListener("input",function(){video.volume=parseFloat(vol.value);});
+  try{video.volume=0.5;if(video.volume!==0.5)$("volRow").hidden=true;video.volume=1;}catch(e){$("volRow").hidden=true;}
+
+  /* go to + copy */
+  function parseTime(str){
+    str=str.trim().replace(/,/g,".");
+    var m=/^(?:f|#|פ)\s*(\d+)$/i.exec(str);
+    if(m)return frameMid(Math.max(0,parseInt(m[1],10)-1));
+    if(!/^[\d:.]+$/.test(str)||!str)return null;
+    var parts=str.split(":").map(parseFloat),t=0;
+    for(var i=0;i<parts.length;i++){if(isNaN(parts[i]))return null;t=t*60+parts[i];}
+    return t;
+  }
+  $("gotoForm").addEventListener("submit",function(e){
+    e.preventDefault();
+    if(!video.duration){say("קודם פותחים וידאו");return;}
+    var t=parseTime($("gotoIn").value);
+    if(t===null){say("לא הבנתי. אפשר לכתוב 1:23.5 או f240 לפריים");return;}
+    goTo(t);say("קפצתי ל-"+fmt(Math.min(t,video.duration)));
+  });
+  function copyText(txt,okMsg){
+    var fail=function(){say(txt,6000);};
+    try{navigator.clipboard.writeText(txt).then(function(){say(okMsg);},fail);}catch(e){fail();}
+  }
+  $("copyTime").addEventListener("click",function(){var t=srtTime(video.currentTime);copyText(t,"הועתק: "+t);});
+
+  /* ---------- A-B loop ---------- */
+  function renderLoop(){
+    var txt="אין לולאה פעילה.";
+    if(loopA!==null&&loopB!==null)txt="לולאה פעילה: "+fmt(loopA)+" עד "+fmt(loopB);
+    else if(loopA!==null)txt="התחלה ב-"+fmt(loopA)+". עכשיו בוחרים סוף.";
+    $("loopText").textContent=txt;
+    $("loopClear").disabled=loopA===null&&loopB===null;
+    renderMarks();
+  }
+  $("loopA").addEventListener("click",function(){loopA=video.currentTime;if(loopB!==null&&loopB<=loopA)loopB=null;renderLoop();});
+  $("loopB").addEventListener("click",function(){
+    if(loopA===null||video.currentTime<=loopA){say("הסוף צריך להיות אחרי ההתחלה");return;}
+    loopB=video.currentTime;renderLoop();say("לולאה פעילה");
+  });
+  $("loopClear").addEventListener("click",function(){loopA=loopB=null;renderLoop();});
+
+  /* ---------- frame rate ---------- */
+  var COMMON=[23.976,24,25,29.97,30,48,50,59.94,60,90,100,119.88,120,240];
+  var diffs=[],lastMediaTime=null;
+  function updateAutoLabel(){fpsSel.options[0].textContent=detectedFps?("אוטומטי - זוהה "+detectedFps):"אוטומטי - 30";}
+  function applyFps(){fps=fpsSel.value==="auto"?(detectedFps||30):parseFloat(fpsSel.value);targetFrame=null;render();}
+  fpsSel.addEventListener("change",applyFps);
+  video.addEventListener("seeking",function(){lastMediaTime=null;});
+  var hasRVFC="requestVideoFrameCallback" in HTMLVideoElement.prototype;
+  if(hasRVFC){
+    var onFrame=function(now,meta){
+      if(!detectedFps&&!video.paused&&video.playbackRate<=1){
+        if(lastMediaTime!==null){var d=meta.mediaTime-lastMediaTime;if(d>0.003&&d<0.25)diffs.push(d);}
+        lastMediaTime=meta.mediaTime;
+        if(diffs.length>=24){
+          var sorted=diffs.slice().sort(function(a,b){return a-b;});
+          var raw=1/sorted[Math.floor(sorted.length/2)],best=COMMON[0];
+          COMMON.forEach(function(c){if(Math.abs(c-raw)<Math.abs(best-raw))best=c;});
+          detectedFps=Math.abs(best-raw)/raw<0.04?best:Math.round(raw*100)/100;
+          updateAutoLabel();if(fpsSel.value==="auto")fps=detectedFps;
+        }
+      }else if(video.paused)lastMediaTime=null;
+      video.requestVideoFrameCallback(onFrame);
+    };
+    video.requestVideoFrameCallback(onFrame);
+  }
+
+  /* ---------- shot-cut search ---------- */
+  var sigCanvas=document.createElement("canvas");sigCanvas.width=32;sigCanvas.height=18;
+  var sigCtx=sigCanvas.getContext("2d",{willReadFrequently:true});
+  function sig(){
+    sigCtx.drawImage(video,0,0,32,18);
+    var d=sigCtx.getImageData(0,0,32,18).data,out=new Uint8Array(576);
+    for(var i=0;i<576;i++)out[i]=(d[i*4]*3+d[i*4+1]*6+d[i*4+2])/10;
+    return out;
+  }
+  function sigDiff(a,b){var t=0;for(var i=0;i<576;i++)t+=Math.abs(a[i]-b[i]);return t/576;}
+  function seekWait(t){
+    return new Promise(function(res){
+      var done=false,fin=function(){if(!done){done=true;res();}};
+      if(Math.abs(video.currentTime-t)<1e-4&&!video.seeking){fin();return;}
+      var on=function(){
+        video.removeEventListener("seeked",on);
+        if(hasRVFC){video.requestVideoFrameCallback(fin);setTimeout(fin,150);}else setTimeout(fin,30);
+      };
+      video.addEventListener("seeked",on);
+      video.currentTime=t;
+      setTimeout(function(){video.removeEventListener("seeked",on);fin();},2000);
+    });
+  }
+  async function findCut(dir){
+    if(!video.duration)return;
+    video.pause();
+    var token=++scanToken,last=totalFrames()-1,STEP=6,HARD=24;
+    var f=Math.min(last,Math.max(0,frameAt(video.currentTime)+(dir<0?-1:0)));
+    var limit=Math.round(fps*60);
+    say("מחפש חיתוך... כל כפתור ניגון מבטל",60000);
+    try{
+      await seekWait(frameMid(f));
+      var prev=sig(),scanned=0;
+      while(token===scanToken&&scanned<limit){
+        var nf=f+STEP*dir;
+        if(nf<0||nf>last)break;
+        await seekWait(frameMid(nf));if(token!==scanToken)return;
+        var cur=sig();
+        if(sigDiff(prev,cur)>HARD){
+          var lo=f,loSig=prev,hi=nf;
+          while(Math.abs(hi-lo)>1){
+            var mid=Math.trunc((lo+hi)/2);
+            await seekWait(frameMid(mid));if(token!==scanToken)return;
+            var ms=sig();
+            if(sigDiff(loSig,ms)>HARD/2)hi=mid;else{lo=mid;loSig=ms;}
+          }
+          await seekWait(frameMid(hi));if(token!==scanToken)return;
+          if(sigDiff(loSig,sig())>14){
+            var land=dir>0?hi:lo;   /* first frame of the shot */
+            targetFrame=land;await seekWait(frameMid(land));
+            say("חיתוך בפריים "+(land+1));render();return;
+          }
+        }
+        f=nf;prev=cur;scanned+=STEP;
+      }
+      if(token===scanToken){say("לא נמצא חיתוך בדקה הקרובה");render();}
+    }catch(e){say("חיפוש החיתוך לא נתמך בדפדפן הזה");}
+  }
+  $("cutNext").addEventListener("click",function(){findCut(1);});
+  $("cutPrev").addEventListener("click",function(){findCut(-1);});
+
+  /* ---------- zoom, pan, rotate, filters ---------- */
+  function layoutVideo(){
+    var W=stage.clientWidth,H=stage.clientHeight,side=rot%180!==0;
+    video.style.width=(side?H:W)+"px";video.style.height=(side?W:H)+"px";
+    applyTransform();
+  }
+  function applyTransform(){
+    var mx=(s-1)*stage.clientWidth/2,my=(s-1)*stage.clientHeight/2;
+    tx=Math.min(mx,Math.max(-mx,tx));ty=Math.min(my,Math.max(-my,ty));
+    video.style.transform="translate(-50%,-50%) translate("+tx+"px,"+ty+"px) scale("+s+") rotate("+rot+"deg) scaleX("+(flip?-1:1)+")";
+    var label=(Math.round(s*10)/10).toFixed(1);
+    zoomBadge.textContent="×"+label;zoomRange.value=s;zoomRange.setAttribute("aria-valuetext","פי "+label);
+    stage.style.cursor=s>1?"grab":"default";
+  }
+  function zoomAt(cx,cy,ns){
+    ns=Math.min(16,Math.max(1,ns));
+    var r=stage.getBoundingClientRect(),px=cx-r.left-r.width/2,py=cy-r.top-r.height/2;
+    tx=px-(px-tx)*ns/s;ty=py-(py-ty)*ns/s;s=ns;applyTransform();
+  }
+  function setZoom(ns){var r=stage.getBoundingClientRect();zoomAt(r.left+r.width/2,r.top+r.height/2,ns);}
+  zoomRange.addEventListener("input",function(){setZoom(parseFloat(zoomRange.value));});
+  $("zoomIn").addEventListener("click",function(){setZoom(s+0.5);say("הגדלה פי "+s.toFixed(1),1200);});
+  $("zoomOut").addEventListener("click",function(){setZoom(s-0.5);say("הגדלה פי "+s.toFixed(1),1200);});
+  $("zoomReset").addEventListener("click",function(){tx=0;ty=0;setZoom(1);say("ההגדלה אופסה",1200);});
+  $("rotate").addEventListener("click",function(){rot=(rot+90)%360;layoutVideo();say("סיבוב "+rot+" מעלות",1200);});
+  $("flip").addEventListener("click",function(){flip=!flip;this.setAttribute("aria-pressed",String(flip));applyTransform();});
+  var F=[["fBright","vBright","brightness"],["fContrast","vContrast","contrast"],["fSat","vSat","saturate"]];
+  function applyFilters(){
+    var parts=[];
+    F.forEach(function(f){var v=$(f[0]).value;$(f[1]).textContent=v+"%";$(f[0]).setAttribute("aria-valuetext",v+" אחוז");if(v!=="100")parts.push(f[2]+"("+v+"%)");});
+    video.style.filter=parts.join(" ");
+  }
+  F.forEach(function(f){$(f[0]).addEventListener("input",applyFilters);});
+  $("fReset").addEventListener("click",function(){
+    F.forEach(function(f){$(f[0]).value=100;});applyFilters();
+    rot=0;flip=false;$("flip").setAttribute("aria-pressed","false");tx=0;ty=0;s=1;layoutVideo();say("התמונה אופסה",1200);
+  });
+  stage.addEventListener("wheel",function(e){
+    if(!video.duration)return;e.preventDefault();
+    zoomAt(e.clientX,e.clientY,s*(e.deltaY<0?1.12:1/1.12));
+  },{passive:false});
+  var pts=new Map(),prevDist=0,prevMid=null,lastTap=0,moved=false;
+  function midDist(){var a=Array.from(pts.values());return{x:(a[0].x+a[1].x)/2,y:(a[0].y+a[1].y)/2,d:Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y)};}
+  stage.addEventListener("pointerdown",function(e){
+    if(!video.duration||e.target.closest("label"))return;
+    try{stage.setPointerCapture(e.pointerId);}catch(err){}
+    pts.set(e.pointerId,{x:e.clientX,y:e.clientY});moved=false;
+    if(pts.size===2){var m=midDist();prevDist=m.d;prevMid=m;}
+  });
+  stage.addEventListener("pointermove",function(e){
+    var p=pts.get(e.pointerId);if(!p)return;
+    var dx=e.clientX-p.x,dy=e.clientY-p.y;p.x=e.clientX;p.y=e.clientY;
+    if(Math.abs(dx)+Math.abs(dy)>2)moved=true;
+    if(pts.size===1){if(s>1){tx+=dx;ty+=dy;applyTransform();}}
+    else if(pts.size===2){
+      var m=midDist();
+      if(prevDist>0){tx+=m.x-prevMid.x;ty+=m.y-prevMid.y;zoomAt(m.x,m.y,s*m.d/prevDist);}
+      prevDist=m.d;prevMid=m;
+    }
+  });
+  function endPointer(e){
+    if(!pts.has(e.pointerId))return;
+    var single=pts.size===1;pts.delete(e.pointerId);prevDist=0;prevMid=null;
+    if(e.type==="pointerup"&&single&&!moved){
+      var now=Date.now();
+      if(now-lastTap<320){if(s>1.05){tx=0;ty=0;setZoom(1);}else zoomAt(e.clientX,e.clientY,3);lastTap=0;}
+      else lastTap=now;
+    }
+  }
+  stage.addEventListener("pointerup",endPointer);stage.addEventListener("pointercancel",endPointer);
+  if(window.ResizeObserver)new ResizeObserver(layoutVideo).observe(stage);else window.addEventListener("resize",layoutVideo);
+
+  /* ---------- snapshot ---------- */
+  var downloads=null;
+  if(window.claude&&window.claude.use){
+    window.claude.use("downloads").then(function(d){if(d){downloads=d;$("snapSave").hidden=false;}}).catch(function(){});
+  }
+  $("snap").addEventListener("click",function(){
+    if(!video.videoWidth)return;
+    try{
+      var c=document.createElement("canvas");c.width=video.videoWidth;c.height=video.videoHeight;
+      c.getContext("2d").drawImage(video,0,0);
+      c.toBlob(function(b){
+        if(!b){say("הצילום נכשל");return;}
+        snapBlob=b;
+        var img=$("snapImg");if(img.src)URL.revokeObjectURL(img.src);
+        img.src=URL.createObjectURL(b);
+        img.alt="הפריים שצולם בזמן "+fmt(video.currentTime);
+        $("snapWrap").hidden=false;say("הפריים צולם");
+      },"image/png");
+    }catch(e){say("הצילום לא נתמך בדפדפן הזה");}
+  });
+  $("snapSave").addEventListener("click",async function(){
+    if(!downloads||!snapBlob)return;
+    var name="frame-"+srtTime(video.currentTime).replace(/[:,]/g,"-")+".png";
+    try{await downloads.save({filename:name,data:snapBlob});}
+    catch(e){
+      try{await downloads.save({filename:name,data:new Uint8Array(await snapBlob.arrayBuffer())});}
+      catch(e2){say("השמירה לא הושלמה. אפשר ללחוץ לחיצה ארוכה על התמונה");}
+    }
+  });
+
+  /* ---------- subtitles ---------- */
+  function decode(buf){
+    var u=new Uint8Array(buf);
+    if(u[0]===0xFF&&u[1]===0xFE)return new TextDecoder("utf-16le").decode(buf);
+    if(u[0]===0xFE&&u[1]===0xFF)return new TextDecoder("utf-16be").decode(buf);
+    try{return new TextDecoder("utf-8",{fatal:true}).decode(buf);}
+    catch(e){try{return new TextDecoder("windows-1255").decode(buf);}catch(e2){return new TextDecoder().decode(buf);}}
+  }
+  function ts(str){
+    var p=str.replace(",",".").split(":").map(parseFloat),t=0;
+    for(var i=0;i<p.length;i++)t=t*60+(p[i]||0);
+    return t;
+  }
+  function clean(txt){return txt.replace(/\{[^}]*\}/g,"").replace(/<[^>]+>/g,"").replace(/[‪-‮⁦-⁩]/g,"").trim();}
+  function parseSubs(text){
+    text=text.replace(/^﻿/,"").replace(/\r\n?/g,"\n");
+    var out=[],m;
+    if(/^\[Script Info\]|^Dialogue:/m.test(text)){
+      text.split("\n").forEach(function(line){
+        if(line.indexOf("Dialogue:")!==0)return;
+        var p=line.slice(9).split(",");if(p.length<10)return;
+        var body=clean(p.slice(9).join(",").replace(/\\N/gi,"\n").replace(/\\h/g," "));
+        if(body)out.push({start:ts(p[1].trim()),end:ts(p[2].trim()),text:body});
+      });
+    }else{
+      var re=/(\d+(?::\d+){1,2}[.,]\d+)\s*-->\s*(\d+(?::\d+){1,2}[.,]\d+)[^\n]*\n([\s\S]*?)(?=\n\s*\n|\n*$)/g;
+      while((m=re.exec(text))){var body2=clean(m[3]);if(body2)out.push({start:ts(m[1]),end:ts(m[2]),text:body2});}
+    }
+    return out.sort(function(a,b){return a.start-b.start;});
+  }
+  function loadSubs(f){
+    var r=new FileReader();
+    r.onload=function(){
+      var parsed=parseSubs(decode(r.result));
+      if(!parsed.length){say("לא מצאתי כתוביות בקובץ הזה. נתמכים SRT, VTT ו-ASS",4000);return;}
+      cues=parsed;curCue=-1;
+      $("subInfo").textContent=f.name+" - "+cues.length+" כתוביות.";
+      buildCueList();updateSubButtons();render();say("נטענו "+cues.length+" כתוביות");
+    };
+    r.onerror=function(){say("לא הצלחתי לקרוא את הקובץ");};
+    r.readAsArrayBuffer(f);
+  }
+  function updateSubButtons(){var ok=cues.length&&video.duration;$("cuePrev").disabled=!ok;$("cueNext").disabled=!ok;}
+  function buildCueList(){
+    cueList.textContent="";
+    var frag=document.createDocumentFragment();
+    cues.forEach(function(c,i){
+      var li=document.createElement("li"),b=document.createElement("button");
+      b.type="button";b.className="go";b.dataset.i=i;
+      var tm=document.createElement("time");tm.textContent=fmt(c.start);
+      var sp=document.createElement("span");sp.dir="auto";sp.textContent=c.text;
+      b.appendChild(tm);b.appendChild(sp);li.appendChild(b);frag.appendChild(li);
+    });
+    cueList.appendChild(frag);
+  }
+  cueList.addEventListener("click",function(e){
+    var b=e.target.closest("button");if(!b)return;
+    goTo(cues[+b.dataset.i].start+subOffset+0.001);
+  });
+  function renderCue(t){
+    if(!cues.length){if(curCue!==-1){curCue=-1;subOverlay.textContent="";}return;}
+    var tt=t-subOffset,idx=-1;
+    for(var i=0;i<cues.length;i++){if(cues[i].start>tt)break;if(tt<cues[i].end)idx=i;}
+    if(idx===curCue)return;
+    var old=cueList.querySelector('[aria-current="true"]');if(old)old.removeAttribute("aria-current");
+    curCue=idx;subOverlay.textContent="";
+    if(idx<0)return;
+    if(showSubs){var sp=document.createElement("span");sp.textContent=cues[idx].text;subOverlay.appendChild(sp);}
+    var b=cueList.children[idx]&&cueList.children[idx].firstChild;
+    if(b){b.setAttribute("aria-current","true");if(!$("p-subs").hidden)cueList.scrollTop=b.parentNode.offsetTop-cueList.offsetTop-60;}
+  }
+  function cueJump(dir){
+    var tt=video.currentTime-subOffset,target=null,i;
+    if(dir>0){for(i=0;i<cues.length;i++)if(cues[i].start>tt+0.01){target=cues[i];break;}}
+    else{for(i=cues.length-1;i>=0;i--)if(cues[i].start<tt-0.25){target=cues[i];break;}}
+    if(!target){say(dir>0?"אין כתובית נוספת":"זו הכתובית הראשונה");return;}
+    goTo(target.start+subOffset+0.001);
+  }
+  $("cueNext").addEventListener("click",function(){cueJump(1);});
+  $("cuePrev").addEventListener("click",function(){cueJump(-1);});
+  function setOffset(v){
+    subOffset=Math.round(v*10)/10;
+    $("offVal").textContent=(subOffset>0?"+":"")+subOffset.toFixed(1)+"s";
+    curCue=-2;render();
+  }
+  $("offPlus").addEventListener("click",function(){setOffset(subOffset+0.1);});
+  $("offMinus").addEventListener("click",function(){setOffset(subOffset-0.1);});
+  $("offZero").addEventListener("click",function(){setOffset(0);});
+  $("subShow").addEventListener("click",function(){showSubs=!showSubs;this.setAttribute("aria-pressed",String(showSubs));curCue=-2;render();});
+  var subSize=$("subSize");
+  function applySubSize(){subOverlay.style.fontSize=subSize.value+"rem";store.set("fp:subSize",subSize.value);}
+  var ss=store.get("fp:subSize");if(ss)subSize.value=ss;
+  subSize.addEventListener("input",applySubSize);applySubSize();
+
+  /* ---------- markers ---------- */
+  function renderMarks(){
+    var d=video.duration||0;
+    marksBar.textContent="";
+    if(d){
+      if(loopA!==null&&loopB!==null){var bar=document.createElement("b");bar.style.left=(loopA/d*100)+"%";bar.style.width=((loopB-loopA)/d*100)+"%";marksBar.appendChild(bar);}
+      marks.forEach(function(t){var i=document.createElement("i");i.style.left=(t/d*100)+"%";marksBar.appendChild(i);});
+    }
+    markList.textContent="";
+    marks.forEach(function(t,idx){
+      var li=document.createElement("li"),go=document.createElement("button"),del=document.createElement("button");
+      go.type="button";go.className="go";go.setAttribute("aria-label","קפיצה לסימנייה "+(idx+1)+" בזמן "+fmt(t));
+      var tm=document.createElement("time");tm.textContent=fmt(t);
+      var sp=document.createElement("span");sp.textContent="פריים "+(frameAt(t)+1);
+      go.appendChild(tm);go.appendChild(sp);
+      go.addEventListener("click",function(){goTo(t);});
+      del.type="button";del.textContent="מחיקה";del.setAttribute("aria-label","מחיקת סימנייה "+(idx+1));
+      del.addEventListener("click",function(){marks.splice(idx,1);renderMarks();saveState();});
+      li.appendChild(go);li.appendChild(del);markList.appendChild(li);
+    });
+    $("markCopy").disabled=!marks.length;
+    $("markNote").hidden=marks.length>0;
+  }
+  function addMark(){
+    if(!video.duration)return;
+    var t=Math.round(video.currentTime*1000)/1000;
+    if(marks.some(function(m){return Math.abs(m-t)<0.0005;})){say("כבר יש סימנייה כאן");return;}
+    marks.push(t);marks.sort(function(a,b){return a-b;});
+    renderMarks();saveState();say("סימנייה ב-"+fmt(t));
+  }
+  $("markAdd").addEventListener("click",addMark);
+  $("markCopy").addEventListener("click",function(){
+    copyText(marks.map(function(t){return srtTime(t)+"\tפריים "+(frameAt(t)+1);}).join("\n"),"הרשימה הועתקה");
+  });
+
+  /* ---------- keyboard ---------- */
+  document.addEventListener("keydown",function(e){
+    if(!video.duration)return;
+    var tag=e.target.tagName;
+    if(tag==="SELECT"||tag==="INPUT")return;
+    var k=e.key,pan=40;
+    if(e.shiftKey&&k.indexOf("Arrow")===0){
+      if(k==="ArrowLeft")tx+=pan;else if(k==="ArrowRight")tx-=pan;else if(k==="ArrowUp")ty+=pan;else ty-=pan;
+      applyTransform();e.preventDefault();return;
+    }
+    if(k===" "&&tag!=="BUTTON"){togglePlay();e.preventDefault();}
+    else if(k==="ArrowRight"||k==="."){stepFrame(1,true);e.preventDefault();}
+    else if(k==="ArrowLeft"||k===","){stepFrame(-1,true);e.preventDefault();}
+    else if(k==="+"||k==="=")setZoom(s+0.5);
+    else if(k==="-")setZoom(s-0.5);
+    else if(k==="0"){tx=0;ty=0;setZoom(1);}
+    else if(k==="m"||k==="M"||k==="צ")addMark();
+    else if(k==="n"||k==="N")findCut(1);
+    else if(k==="p"||k==="P")findCut(-1);
+  });
+
+  layoutVideo();applyFilters();render();renderMarks();
+})();
+</script>
+</body>
+</html>
