@@ -51,9 +51,15 @@ jobs:
       - name: Run self-test in simulator
         run: |
           set -x
-          RT=$(xcrun simctl list runtimes ios -j | python3 -c "import json,sys;r=[x for x in json.load(sys.stdin)['runtimes'] if x['isAvailable']];print(r[-1]['identifier'])")
-          DT=$(xcrun simctl list devicetypes -j | python3 -c "import json,sys;d=[x['identifier'] for x in json.load(sys.stdin)['devicetypes'] if 'iPhone' in x['name'] and 'Pro' not in x['name'] and 'SE' not in x['name']];print(d[-1])")
-          DEV=$(xcrun simctl create kadr-test "$DT" "$RT")
+          DEV=$(xcrun simctl list devices available -j | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)['devices']
+          ios=sorted([k for k in d if 'iOS' in k], key=lambda k:[int(x) for x in k.split('iOS-')[1].split('-')])
+          for k in reversed(ios):
+              ph=[x for x in d[k] if x['name'].startswith('iPhone')]
+              if ph: print(ph[0]['udid']); break
+          ")
+          echo "device $DEV"
           xcrun simctl boot "$DEV"
           xcrun simctl bootstatus "$DEV" -b
           xcrun simctl install "$DEV" simbuild/Build/Products/Debug-iphonesimulator/Kadr.app
