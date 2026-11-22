@@ -280,6 +280,16 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
         DispatchQueue.main.async {
             self.webView?.evaluateJavaScript("window.kadrNativeOpen(\(json))")
         }
+        // The exact frame rate makes the frame counter right from the first frame.
+        Task {
+            let asset = AVURLAsset(url: file)
+            guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+                  let fps = try? await track.load(.nominalFrameRate), fps > 0 else { return }
+            print("KADR-NATIVE: frame rate \(fps)")
+            DispatchQueue.main.async {
+                self.webView?.evaluateJavaScript("window.kadrNativeFps && window.kadrNativeFps(\(fps))")
+            }
+        }
     }
 
     private func setBusy(_ busy: Bool) {
