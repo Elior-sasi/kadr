@@ -57,6 +57,8 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
     let scheme: LocalSchemeHandler
     let cancelFlag = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
     private var converting = false
+    private var scopedSource: URL?        // a Files pick we are reading in place
+    enum ImportHow { case inPlace, move }
     private var lastProgress = -1.0
 
     override init() {
@@ -96,7 +98,9 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
             let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             print("KADR-NATIVE: self-test with \(name)")
             webView.evaluateJavaScript("window.__kadrSelfTest && window.__kadrSelfTest()")
-            importVideo(from: docs.appendingPathComponent(name), name: name, move: false)
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.importVideo(from: docs.appendingPathComponent(name), name: name, how: .inPlace)
+            }
         }
     }
 
@@ -137,7 +141,7 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
         for ext in ["mkv", "webm", "ts", "m2ts", "flv", "wmv", "ogv", "3gp", "vob", "mts"] {
             if let t = UTType(filenameExtension: ext) { types.append(t) }
         }
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: false)
         picker.delegate = self
         topController()?.present(picker, animated: true)
     }
@@ -157,54 +161,71 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
             }
             let ext = url.pathExtension.isEmpty ? "mov" : url.pathExtension
             let name = (suggested as NSString).pathExtension.isEmpty ? "\(suggested).\(ext)" : suggested
-            self.importVideo(from: url, name: name, move: true)
+            self.importVideo(from: url, name: name, how: .move)
         }
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let url = urls.first else { return }
         setBusy(true)
-        importVideo(from: url, name: url.lastPathComponent, move: true)
+        DispatchQueue.global(qos: .userInitiated).async {
+            self.importVideo(from: url, name: url.lastPathComponent, how: .inPlace)
+        }
     }
 
-    /// Brings the picked video next to the page. Files the iPhone can play are opened
-    /// as they are; anything else (MKV, AVI, unsupported codecs) is converted first.
-    private func importVideo(from source: URL, name: String, move: Bool) {
+    /// Opens the picked video. Files the iPhone can play are served as they are, read in
+    /// place when they come from Files (no copy). Anything else (MKV, AVI, unsupported
+    /// codecs) is converted next to the page first.
+    private func importVideo(from source: URL, name: String, how: ImportHow) {
         if converting { return }
         let fm = FileManager.default
-        let scoped = source.startAccessingSecurityScopedResource()
-        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        if let old = scopedSource { old.stopAccessingSecurityScopedResource(); scopedSource = nil }
+        onMain { self.scheme.aliases.removeAll() }
+        for old in (try? fm.contentsOfDirectory(at: mediaDir, includingPropertiesForKeys: nil)) ?? [] {
+            try? fm.removeItem(at: old)
+        }
         let ext = source.pathExtension.isEmpty ? "mov" : source.pathExtension.lowercased()
-        let dest = mediaDir.appendingPathComponent("v-\(UUID().uuidString.prefix(8)).\(ext)")
-        do {
-            for old in (try? fm.contentsOfDirectory(at: mediaDir, includingPropertiesForKeys: nil)) ?? [] {
-                try? fm.removeItem(at: old)
+        let working: URL
+        switch how {
+        case .inPlace:
+            if source.startAccessingSecurityScopedResource() { scopedSource = source }
+            // Makes sure an iCloud file is downloaded before it is read.
+            var coordError: NSError?
+            NSFileCoordinator().coordinate(readingItemAt: source, options: [], error: &coordError) { _ in }
+            guard fm.isReadableFile(atPath: source.path) else {
+                return fail("לא הצלחתי לקרוא את הקובץ. \(coordError?.localizedDescription ?? "")")
             }
-            if move { do { try fm.moveItem(at: source, to: dest) } catch { try fm.copyItem(at: source, to: dest) } }
-            else { try fm.copyItem(at: source, to: dest) }
-        } catch {
-            return fail("לא הצלחתי להעתיק את הסרטון: \(error.localizedDescription)")
+            working = source
+        case .move:
+            let dest = mediaDir.appendingPathComponent("v-\(UUID().uuidString.prefix(8)).\(ext)")
+            do {
+                do { try fm.moveItem(at: source, to: dest) } catch { try fm.copyItem(at: source, to: dest) }
+            } catch {
+                return fail("לא הצלחתי להעתיק את הסרטון: \(error.localizedDescription)")
+            }
+            working = dest
         }
         print("KADR-NATIVE: imported \(name)")
         Task {
             let native = ["mp4", "mov", "m4v", "3gp"].contains(ext)
-            let playable = native ? ((try? await AVURLAsset(url: dest).load(.isPlayable)) ?? false) : false
+            let playable = native ? ((try? await AVURLAsset(url: working).load(.isPlayable)) ?? false) : false
             if playable {
-                self.openInPage(dest, name: name, subs: [])
+                self.openInPage(working, name: name, subs: [])
             } else {
-                self.convert(dest, name: name)
+                self.convert(working, name: name, deleteSource: how == .move, flags: 0)
             }
         }
     }
 
-    private func convert(_ src: URL, name: String) {
+    private func convert(_ src: URL, name: String, deleteSource: Bool, flags: Int32,
+                         subsFromFirstPass: [[String: String]]? = nil) {
         converting = true
         cancelFlag.pointee = 0
         lastProgress = -1
         let out = mediaDir.appendingPathComponent("c-\(UUID().uuidString.prefix(8)).mp4")
         let subsDir = mediaDir.appendingPathComponent("subs-\(UUID().uuidString.prefix(8))", isDirectory: true)
         try? FileManager.default.createDirectory(at: subsDir, withIntermediateDirectories: true)
-        print("KADR-NATIVE: converting \(name)")
+        print("KADR-NATIVE: converting \(name) flags=\(flags)")
         DispatchQueue.main.async {
             UIApplication.shared.isIdleTimerDisabled = true
             self.webView?.evaluateJavaScript("window.kadrNativeConvert && window.kadrNativeConvert('start',0,0)")
@@ -212,21 +233,45 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
         let background = UIApplication.shared.beginBackgroundTask(withName: "kadr-convert")
         let ctx = Unmanaged.passUnretained(self).toOpaque()
         DispatchQueue.global(qos: .userInitiated).async {
+            let started = Date()
             var err = [CChar](repeating: 0, count: 512)
-            let rc = kadr_convert(src.path, out.path, subsDir.path, self.cancelFlag, { frac, mode, ctx in
+            let rc = kadr_convert(src.path, out.path, subsDir.path, flags, self.cancelFlag, { frac, mode, ctx in
                 guard let ctx = ctx else { return }
                 Unmanaged<PlayerController>.fromOpaque(ctx).takeUnretainedValue().reportProgress(frac, mode: Int(mode))
             }, ctx, &err, Int32(err.count))
             let message = String(cString: err)
-            try? FileManager.default.removeItem(at: src)
-            print("KADR-NATIVE: convert rc=\(rc) \(message)")
+            print("KADR-NATIVE: convert rc=\(rc) in \(String(format: "%.2f", Date().timeIntervalSince(started)))s \(message)")
+            let subs = subsFromFirstPass ?? self.readSubs(subsDir)
+
+            // Copied audio (Opus, FLAC, AC-3…) is checked on this device; if it can't play,
+            // convert once more with the audio re-encoded.
+            var audioOK = true
+            if rc == 0 && (flags & KADR_FORCE_AUDIO) == 0 {
+                let sem = DispatchSemaphore(value: 0)
+                Task {
+                    if let track = try? await AVURLAsset(url: out).loadTracks(withMediaType: .audio).first {
+                        audioOK = (try? await track.load(.isPlayable)) ?? false
+                    }
+                    sem.signal()
+                }
+                sem.wait()
+                print("KADR-NATIVE: audio playable \(audioOK)")
+            }
+
             DispatchQueue.main.async {
                 self.converting = false
                 UIApplication.shared.isIdleTimerDisabled = false
                 UIApplication.shared.endBackgroundTask(background)
+                if rc == 0 && !audioOK {
+                    try? FileManager.default.removeItem(at: out)
+                    self.convert(src, name: name, deleteSource: deleteSource, flags: KADR_FORCE_AUDIO,
+                                 subsFromFirstPass: subs)
+                    return
+                }
+                if deleteSource { try? FileManager.default.removeItem(at: src) }
                 self.webView?.evaluateJavaScript("window.kadrNativeConvert && window.kadrNativeConvert('end',1,0)")
                 if rc == 0 {
-                    self.openInPage(out, name: name, subs: self.readSubs(subsDir))
+                    self.openInPage(out, name: name, subs: subs)
                 } else {
                     try? FileManager.default.removeItem(at: out)
                     if rc == KADR_CANCELLED {
@@ -268,15 +313,22 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
 
     private func openInPage(_ file: URL, name: String, subs: [[String: String]]) {
         let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
+        var served = file.lastPathComponent
+        if file.deletingLastPathComponent().standardizedFileURL.path != mediaDir.standardizedFileURL.path {
+            let ext = file.pathExtension.isEmpty ? "mov" : file.pathExtension.lowercased()
+            served = "x-\(UUID().uuidString.prefix(8)).\(ext)"
+            let alias = served
+            onMain { self.scheme.aliases[alias] = file }
+        }
         let info: [String: Any] = [
-            "url": "\(LocalSchemeHandler.scheme)://app/media/\(file.lastPathComponent)",
+            "url": "\(LocalSchemeHandler.scheme)://app/media/\(served)",
             "name": name,
             "size": size,
             "subs": subs,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: info),
               let json = String(data: data, encoding: .utf8) else { return }
-        print("KADR-NATIVE: open \(file.lastPathComponent) (\(size) bytes, \(subs.count) subtitle tracks)")
+        print("KADR-NATIVE: open \(served) (\(size) bytes, \(subs.count) subtitle tracks)")
         DispatchQueue.main.async {
             self.webView?.evaluateJavaScript("window.kadrNativeOpen(\(json))")
         }
@@ -290,6 +342,11 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
                 self.webView?.evaluateJavaScript("window.kadrNativeFps && window.kadrNativeFps(\(fps))")
             }
         }
+    }
+
+    /// Runs `body` on the main thread and waits, without deadlocking when already there.
+    private func onMain(_ body: () -> Void) {
+        if Thread.isMainThread { body() } else { DispatchQueue.main.sync(execute: body) }
     }
 
     private func setBusy(_ busy: Bool) {
@@ -312,6 +369,7 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
 final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "kadr"
     let root: URL
+    var aliases: [String: URL] = [:]                 // media/<name> served from elsewhere (main thread)
     private var live = Set<ObjectIdentifier>()       // touched on the main thread only
     private let io = DispatchQueue(label: "kadr.scheme.io", qos: .userInitiated)
 
@@ -324,8 +382,9 @@ final class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
 
         var path = url.path
         if path.isEmpty || path == "/" { path = "/index.html" }
-        let file = root.appendingPathComponent(String(path.dropFirst())).standardizedFileURL
-        guard file.path.hasPrefix(root.path),
+        var file = root.appendingPathComponent(String(path.dropFirst())).standardizedFileURL
+        if path.hasPrefix("/media/"), let target = aliases[String(path.dropFirst(7))] { file = target }
+        guard file.path.hasPrefix(root.path) || aliases.values.contains(file),
               let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value
         else { return finish(task, id, status: 404) }
 

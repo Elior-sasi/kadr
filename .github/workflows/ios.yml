@@ -79,10 +79,10 @@ jobs:
           xcrun simctl bootstatus "$DEV" -b
           xcrun simctl install "$DEV" simbuild/Build/Products/Debug-iphonesimulator/Kadr.app
           DATA=$(xcrun simctl get_app_container "$DEV" com.eliorsasi.kadr data)
-          mkdir -p "$DATA/Documents" && cp ci/test.mp4 ci/test.mkv ci/test.avi ci/test10.mkv "$DATA/Documents/"
+          mkdir -p "$DATA/Documents" && cp ci/test.mp4 ci/test.mkv ci/test.avi ci/test10.mkv ci/test-ac3.mkv "$DATA/Documents/"
           : > sim.log
           ok=0
-          for f in test.mp4 test.mkv test.avi test10.mkv; do
+          for f in test.mp4 test.mkv test.avi test10.mkv test-ac3.mkv; do
             echo "===== $f" >> sim.log
             xcrun simctl launch --console-pty --terminate-running-process "$DEV" com.eliorsasi.kadr -KadrTestVideo "$f" >> sim.log 2>&1 &
             for i in $(seq 1 60); do sleep 2; grep -q "SELFTEST DONE" <(sed -n "/===== $f/,\$p" sim.log) && break; done
@@ -92,8 +92,8 @@ jobs:
             if sed -n "/===== $f/,\$p" sim.log | grep -q "SELFTEST DONE"; then ok=$((ok+1)); fi
           done
           cat sim.log
-          echo "passed $ok of 4"
-          [ "$ok" = 4 ]
+          echo "passed $ok of 5"
+          [ "$ok" = 5 ]
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -13,6 +13,17 @@
 
 #define MAX_SUBS 32
 
+#ifdef KADR_PROFILE
+#include <time.h>
+static double prof_dec, prof_sws, prof_enc;
+static double now_s(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); return t.tv_sec+t.tv_nsec/1e9; }
+#define PROF_START double _p0 = now_s()
+#define PROF_ADD(v) do { v += now_s() - _p0; _p0 = now_s(); } while (0)
+#else
+#define PROF_START
+#define PROF_ADD(v)
+#endif
+
 typedef struct {
     AVFormatContext *ic, *oc;
     int vi, ai;
@@ -62,9 +73,15 @@ static int video_can_copy(const AVCodecParameters *p) {
     return 0;
 }
 
-static int audio_can_copy(const AVCodecParameters *p) {
-    return p->codec_id == AV_CODEC_ID_AAC || p->codec_id == AV_CODEC_ID_MP3 ||
-           p->codec_id == AV_CODEC_ID_ALAC;
+static int audio_can_copy(const AVCodecParameters *p, int flags) {
+    if (flags & KADR_FORCE_AUDIO) return 0;
+    switch (p->codec_id) {
+        case AV_CODEC_ID_AAC: case AV_CODEC_ID_MP3: case AV_CODEC_ID_ALAC:
+        case AV_CODEC_ID_OPUS: case AV_CODEC_ID_FLAC: case AV_CODEC_ID_AC3: case AV_CODEC_ID_EAC3:
+            return 1;
+        default:
+            return 0;
+    }
 }
 
 static int write_encoded(Conv *c, AVCodecContext *enc, AVStream *ost) {
@@ -121,6 +138,7 @@ static int open_video_transcode(Conv *c) {
     c->venc->bit_rate = br;
     if (c->oc->oformat->flags & AVFMT_GLOBALHEADER) c->venc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     av_opt_set_int(c->venc->priv_data, "allow_sw", 1, 0);   /* videotoolbox: simulator has no hardware */
+    av_opt_set_int(c->venc->priv_data, "prio_speed", 1, 0);  /* videotoolbox: favour speed */
     av_opt_set(c->venc->priv_data, "preset", "veryfast", 0); /* libx264 only */
     int ret = avcodec_open2(c->venc, enc, NULL);
     if (ret < 0) { seterr(c, "לא הצלחתי להפעיל את מקודד הווידאו", av_err2str(ret)); return ret; }
@@ -149,35 +167,62 @@ static int encode_video(Conv *c, AVFrame *f) {
 }
 
 static int decode_video(Conv *c, const AVPacket *pkt) {
+    PROF_START;
     int ret = avcodec_send_packet(c->vdec, pkt);
     if (ret < 0 && ret != AVERROR_EOF) return 0;   /* skip a broken packet */
     while ((ret = avcodec_receive_frame(c->vdec, c->vframe)) >= 0) {
+        PROF_ADD(prof_dec);
         AVFrame *f = c->vframe;
-        if (!c->sws || f->width != c->sws_w || f->height != c->sws_h || f->format != c->sws_fmt) {
-            sws_freeContext(c->sws);
-            c->sws = sws_getContext(f->width, f->height, f->format, c->venc->width, c->venc->height,
-                                    AV_PIX_FMT_YUV420P, SWS_BILINEAR, NULL, NULL, NULL);
-            if (!c->sws) { seterr(c, "המרת התמונה נכשלה", NULL); return AVERROR(EINVAL); }
-            c->sws_w = f->width; c->sws_h = f->height; c->sws_fmt = f->format;
-        }
-        if ((ret = av_frame_make_writable(c->vscaled)) < 0) return ret;
-        sws_scale(c->sws, (const uint8_t *const *)f->data, f->linesize, 0, f->height,
-                  c->vscaled->data, c->vscaled->linesize);
-
         int64_t step = av_rescale_q(1, av_inv_q(c->venc->framerate), c->venc->time_base);
         if (step < 1) step = 1;
         int64_t pts = f->best_effort_timestamp;
         if (pts == AV_NOPTS_VALUE) pts = (c->v_last_pts == AV_NOPTS_VALUE) ? 0 : c->v_last_pts + step;
         if (c->v_last_pts != AV_NOPTS_VALUE && pts <= c->v_last_pts) pts = c->v_last_pts + 1;
         c->v_last_pts = pts;
+
+        /* already the right size and layout: hand the decoded picture straight to the encoder */
+        if (f->format == AV_PIX_FMT_YUV420P && f->width == c->venc->width && f->height == c->venc->height) {
+            f->pts = pts;
+            f->pict_type = AV_PICTURE_TYPE_NONE;
+            ret = encode_video(c, f);
+            av_frame_unref(f);
+            PROF_ADD(prof_enc);
+            if (ret < 0) return ret;
+            continue;
+        }
+        if (!c->sws || f->width != c->sws_w || f->height != c->sws_h || f->format != c->sws_fmt) {
+            sws_freeContext(c->sws);
+            c->sws = sws_getContext(f->width, f->height, f->format, c->venc->width, c->venc->height,
+                                    AV_PIX_FMT_YUV420P, SWS_FAST_BILINEAR, NULL, NULL, NULL);
+            if (!c->sws) { seterr(c, "המרת התמונה נכשלה", NULL); return AVERROR(EINVAL); }
+            c->sws_w = f->width; c->sws_h = f->height; c->sws_fmt = f->format;
+        }
+        if ((ret = av_frame_make_writable(c->vscaled)) < 0) return ret;
+        sws_scale(c->sws, (const uint8_t *const *)f->data, f->linesize, 0, f->height,
+                  c->vscaled->data, c->vscaled->linesize);
+        PROF_ADD(prof_sws);
+
         c->vscaled->pts = pts;
         av_frame_unref(f);
         if ((ret = encode_video(c, c->vscaled)) < 0) return ret;
+        PROF_ADD(prof_enc);
     }
     return (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) ? 0 : ret;
 }
 
 /* ---------- audio ---------- */
+
+static enum AVSampleFormat first_sample_fmt(const AVCodec *enc) {
+    const enum AVSampleFormat *fmts = NULL;
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
+    int n = 0;
+    if (avcodec_get_supported_config(NULL, enc, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, (const void **)&fmts, &n) < 0 || n == 0)
+        fmts = NULL;
+#else
+    fmts = enc->sample_fmts;
+#endif
+    return (fmts && fmts[0] != AV_SAMPLE_FMT_NONE) ? fmts[0] : AV_SAMPLE_FMT_FLTP;
+}
 
 static int open_audio_transcode(Conv *c) {
     AVCodecParameters *p = c->ain->codecpar;
@@ -189,19 +234,24 @@ static int open_audio_transcode(Conv *c) {
     c->adec->pkt_timebase = c->ain->time_base;
     if (avcodec_open2(c->adec, dec, NULL) < 0) return AVERROR(EINVAL);
 
-    const AVCodec *enc = avcodec_find_encoder(AV_CODEC_ID_AAC);
-    if (!enc) return AVERROR_ENCODER_NOT_FOUND;
-    c->aenc = avcodec_alloc_context3(enc);
-    if (!c->aenc) return AVERROR(ENOMEM);
     int rate = p->sample_rate;
     if (rate != 44100 && rate != 48000) rate = 48000;
-    c->aenc->sample_rate = rate;
-    av_channel_layout_default(&c->aenc->ch_layout, 2);
-    c->aenc->sample_fmt = AV_SAMPLE_FMT_FLTP;
-    c->aenc->bit_rate = 192000;
-    c->aenc->time_base = (AVRational){1, rate};
-    if (c->oc->oformat->flags & AVFMT_GLOBALHEADER) c->aenc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-    int ret = avcodec_open2(c->aenc, enc, NULL);
+    const char *names[] = {"aac_at", "aac"};
+    int ret = AVERROR_ENCODER_NOT_FOUND;
+    for (int k = 0; k < 2 && ret < 0; k++) {
+        const AVCodec *enc = avcodec_find_encoder_by_name(names[k]);
+        if (!enc) continue;
+        avcodec_free_context(&c->aenc);
+        c->aenc = avcodec_alloc_context3(enc);
+        if (!c->aenc) return AVERROR(ENOMEM);
+        c->aenc->sample_rate = rate;
+        av_channel_layout_default(&c->aenc->ch_layout, 2);
+        c->aenc->sample_fmt = first_sample_fmt(enc);
+        c->aenc->bit_rate = 192000;
+        c->aenc->time_base = (AVRational){1, rate};
+        if (c->oc->oformat->flags & AVFMT_GLOBALHEADER) c->aenc->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+        ret = avcodec_open2(c->aenc, enc, NULL);
+    }
     if (ret < 0) return ret;
 
     c->aout = avformat_new_stream(c->oc, NULL);
@@ -342,7 +392,7 @@ static void open_subtitles(Conv *c, const char *subs_dir) {
 /* ---------- main ---------- */
 
 int kadr_convert(const char *in_path, const char *out_path, const char *subs_dir,
-                 const volatile int *cancel, KadrProgressFn progress, void *ctx,
+                 int flags, const volatile int *cancel, KadrProgressFn progress, void *ctx,
                  char *err, int err_len) {
     Conv conv;
     memset(&conv, 0, sizeof conv);
@@ -397,7 +447,7 @@ int kadr_convert(const char *in_path, const char *out_path, const char *subs_dir
     /* audio: if it can't be set up, the video still converts without sound */
     if (c->ai >= 0) {
         c->ain = c->ic->streams[c->ai];
-        c->acopy = audio_can_copy(c->ain->codecpar);
+        c->acopy = audio_can_copy(c->ain->codecpar, flags);
         if (c->acopy) {
             c->aout = avformat_new_stream(c->oc, NULL);
             if (!c->aout) { ret = AVERROR(ENOMEM); goto end; }
@@ -492,6 +542,9 @@ int kadr_convert(const char *in_path, const char *out_path, const char *subs_dir
 
 end:
     (void)header_done;
+#ifdef KADR_PROFILE
+    fprintf(stderr, "profile: decode %.2fs  convert %.2fs  encode %.2fs\n", prof_dec, prof_sws, prof_enc);
+#endif
     av_packet_free(&pkt);
     av_packet_free(&c->opkt);
     for (int i = 0; i < c->nsubs; i++) {

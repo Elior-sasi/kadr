@@ -39,7 +39,7 @@ rm -rf "$BUILD"; mkdir -p "$BUILD"; cd "$BUILD"
   --disable-lzma --disable-sdl2 --disable-xlib --disable-securetransport \
   --disable-indevs --disable-outdevs --disable-hwaccels \
   --enable-videotoolbox --enable-audiotoolbox \
-  --disable-encoders --enable-encoder=aac,h264_videotoolbox
+  --disable-encoders --enable-encoder=aac,aac_at,h264_videotoolbox
 
 make -j"$(sysctl -n hw.ncpu)"
 make install
