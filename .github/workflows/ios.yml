@@ -10,6 +10,13 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Restore FFmpeg (ios)
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg/ios
+          key: ffmpeg-ios-n7.1.1-${{ hashFiles('ci/build-ffmpeg.sh') }}
+      - name: Build FFmpeg (ios)
+        run: ci/build-ffmpeg.sh ios
       - name: Generate Xcode project
         run: |
           brew install xcodegen
@@ -39,6 +46,13 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Restore FFmpeg (sim)
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg/sim
+          key: ffmpeg-sim-n7.1.1-${{ hashFiles('ci/build-ffmpeg.sh') }}
+      - name: Build FFmpeg (sim)
+        run: ci/build-ffmpeg.sh sim
       - name: Generate Xcode project
         run: |
           brew install xcodegen
@@ -64,16 +78,25 @@ jobs:
           xcrun simctl bootstatus "$DEV" -b
           xcrun simctl install "$DEV" simbuild/Build/Products/Debug-iphonesimulator/Kadr.app
           DATA=$(xcrun simctl get_app_container "$DEV" com.eliorsasi.kadr data)
-          mkdir -p "$DATA/Documents" && cp ci/test.mp4 "$DATA/Documents/test.mp4"
-          xcrun simctl launch --console-pty "$DEV" com.eliorsasi.kadr -KadrTestVideo test.mp4 > sim.log 2>&1 &
-          sleep 30
-          xcrun simctl io "$DEV" screenshot sim.png
+          mkdir -p "$DATA/Documents" && cp ci/test.mp4 ci/test.mkv ci/test.avi ci/test10.mkv "$DATA/Documents/"
+          : > sim.log
+          ok=0
+          for f in test.mp4 test.mkv test.avi test10.mkv; do
+            echo "===== $f" >> sim.log
+            xcrun simctl launch --console-pty --terminate-running-process "$DEV" com.eliorsasi.kadr -KadrTestVideo "$f" >> sim.log 2>&1 &
+            for i in $(seq 1 60); do sleep 2; grep -q "SELFTEST DONE" <(sed -n "/===== $f/,\$p" sim.log) && break; done
+            xcrun simctl io "$DEV" screenshot "sim-${f%.*}-${f##*.}.png"
+            xcrun simctl terminate "$DEV" com.eliorsasi.kadr || true
+            sleep 2
+            if sed -n "/===== $f/,\$p" sim.log | grep -q "SELFTEST DONE"; then ok=$((ok+1)); fi
+          done
           cat sim.log
-          grep -q "SELFTEST DONE" sim.log
+          echo "passed $ok of 4"
+          [ "$ok" = 4 ]
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: simulator-result
           path: |
             sim.log
-            sim.png
+            sim-*.png

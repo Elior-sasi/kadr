@@ -2,6 +2,7 @@ import SwiftUI
 import WebKit
 import PhotosUI
 import UniformTypeIdentifiers
+import AVFoundation
 
 @main
 struct KadrApp: App {
@@ -54,6 +55,9 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
     let wwwDir: URL
     let mediaDir: URL
     let scheme: LocalSchemeHandler
+    let cancelFlag = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
+    private var converting = false
+    private var lastProgress = -1.0
 
     override init() {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -80,6 +84,7 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
         guard let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
         switch action {
         case "pickVideo": presentSourceMenu()
+        case "cancelConvert": cancelFlag.pointee = 1
         case "log": print("KADR-JS: \(body["text"] ?? "")")
         default: break
         }
@@ -91,7 +96,7 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
             let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             print("KADR-NATIVE: self-test with \(name)")
             webView.evaluateJavaScript("window.__kadrSelfTest && window.__kadrSelfTest()")
-            importVideo(from: docs.appendingPathComponent(name), name: name)
+            importVideo(from: docs.appendingPathComponent(name), name: name, move: false)
         }
     }
 
@@ -128,7 +133,10 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
     }
 
     private func presentFiles() {
-        let types: [UTType] = [.movie, .video, .mpeg4Movie, .quickTimeMovie, .audiovisualContent]
+        var types: [UTType] = [.movie, .video, .mpeg4Movie, .quickTimeMovie, .audiovisualContent, .avi]
+        for ext in ["mkv", "webm", "ts", "m2ts", "flv", "wmv", "ogv", "3gp", "vob", "mts"] {
+            if let t = UTType(filenameExtension: ext) { types.append(t) }
+        }
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
         picker.delegate = self
         topController()?.present(picker, animated: true)
@@ -149,42 +157,128 @@ final class PlayerController: NSObject, WKScriptMessageHandler, WKNavigationDele
             }
             let ext = url.pathExtension.isEmpty ? "mov" : url.pathExtension
             let name = (suggested as NSString).pathExtension.isEmpty ? "\(suggested).\(ext)" : suggested
-            self.importVideo(from: url, name: name)
+            self.importVideo(from: url, name: name, move: true)
         }
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let url = urls.first else { return }
         setBusy(true)
-        importVideo(from: url, name: url.lastPathComponent)
+        importVideo(from: url, name: url.lastPathComponent, move: true)
     }
 
-    /// Copies the picked video next to the page and hands its URL to the player.
-    private func importVideo(from source: URL, name: String) {
+    /// Brings the picked video next to the page. Files the iPhone can play are opened
+    /// as they are; anything else (MKV, AVI, unsupported codecs) is converted first.
+    private func importVideo(from source: URL, name: String, move: Bool) {
+        if converting { return }
         let fm = FileManager.default
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        let ext = source.pathExtension.isEmpty ? "mov" : source.pathExtension.lowercased()
+        let dest = mediaDir.appendingPathComponent("v-\(UUID().uuidString.prefix(8)).\(ext)")
         do {
             for old in (try? fm.contentsOfDirectory(at: mediaDir, includingPropertiesForKeys: nil)) ?? [] {
                 try? fm.removeItem(at: old)
             }
-            let ext = source.pathExtension.isEmpty ? "mov" : source.pathExtension.lowercased()
-            let fileName = "v-\(UUID().uuidString.prefix(8)).\(ext)"
-            let dest = mediaDir.appendingPathComponent(fileName)
-            try fm.copyItem(at: source, to: dest)
-            let size = (try? fm.attributesOfItem(atPath: dest.path)[.size] as? NSNumber)?.int64Value ?? 0
-            let info: [String: Any] = [
-                "url": "\(LocalSchemeHandler.scheme)://app/media/\(fileName)",
-                "name": name,
-                "size": size,
-            ]
-            let json = String(data: try JSONSerialization.data(withJSONObject: info), encoding: .utf8) ?? "{}"
-            print("KADR-NATIVE: imported \(name) (\(size) bytes)")
-            DispatchQueue.main.async {
-                self.webView?.evaluateJavaScript("window.kadrNativeOpen(\(json))")
-            }
+            if move { do { try fm.moveItem(at: source, to: dest) } catch { try fm.copyItem(at: source, to: dest) } }
+            else { try fm.copyItem(at: source, to: dest) }
         } catch {
-            fail("לא הצלחתי להעתיק את הסרטון: \(error.localizedDescription)")
+            return fail("לא הצלחתי להעתיק את הסרטון: \(error.localizedDescription)")
+        }
+        print("KADR-NATIVE: imported \(name)")
+        Task {
+            let native = ["mp4", "mov", "m4v", "3gp"].contains(ext)
+            let playable = native ? ((try? await AVURLAsset(url: dest).load(.isPlayable)) ?? false) : false
+            if playable {
+                self.openInPage(dest, name: name, subs: [])
+            } else {
+                self.convert(dest, name: name)
+            }
+        }
+    }
+
+    private func convert(_ src: URL, name: String) {
+        converting = true
+        cancelFlag.pointee = 0
+        lastProgress = -1
+        let out = mediaDir.appendingPathComponent("c-\(UUID().uuidString.prefix(8)).mp4")
+        let subsDir = mediaDir.appendingPathComponent("subs-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try? FileManager.default.createDirectory(at: subsDir, withIntermediateDirectories: true)
+        print("KADR-NATIVE: converting \(name)")
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = true
+            self.webView?.evaluateJavaScript("window.kadrNativeConvert && window.kadrNativeConvert('start',0,0)")
+        }
+        let background = UIApplication.shared.beginBackgroundTask(withName: "kadr-convert")
+        let ctx = Unmanaged.passUnretained(self).toOpaque()
+        DispatchQueue.global(qos: .userInitiated).async {
+            var err = [CChar](repeating: 0, count: 512)
+            let rc = kadr_convert(src.path, out.path, subsDir.path, self.cancelFlag, { frac, mode, ctx in
+                guard let ctx = ctx else { return }
+                Unmanaged<PlayerController>.fromOpaque(ctx).takeUnretainedValue().reportProgress(frac, mode: Int(mode))
+            }, ctx, &err, Int32(err.count))
+            let message = String(cString: err)
+            try? FileManager.default.removeItem(at: src)
+            print("KADR-NATIVE: convert rc=\(rc) \(message)")
+            DispatchQueue.main.async {
+                self.converting = false
+                UIApplication.shared.isIdleTimerDisabled = false
+                UIApplication.shared.endBackgroundTask(background)
+                self.webView?.evaluateJavaScript("window.kadrNativeConvert && window.kadrNativeConvert('end',1,0)")
+                if rc == 0 {
+                    self.openInPage(out, name: name, subs: self.readSubs(subsDir))
+                } else {
+                    try? FileManager.default.removeItem(at: out)
+                    if rc == KADR_CANCELLED {
+                        self.webView?.evaluateJavaScript("window.kadrNativeCancelled && window.kadrNativeCancelled()")
+                    } else {
+                        self.fail(message.isEmpty ? "ההמרה נכשלה." : message)
+                    }
+                }
+            }
+        }
+    }
+
+    private func reportProgress(_ frac: Double, mode: Int) {
+        if frac - lastProgress < 0.01 && frac < 1 && frac > 0 { return }
+        lastProgress = frac
+        DispatchQueue.main.async {
+            self.webView?.evaluateJavaScript("window.kadrNativeConvert && window.kadrNativeConvert('progress',\(frac),\(mode))")
+        }
+    }
+
+    private func readSubs(_ dir: URL) -> [[String: String]] {
+        guard let index = try? String(contentsOf: dir.appendingPathComponent("subs.tsv"), encoding: .utf8) else { return [] }
+        var out: [[String: String]] = []
+        for line in index.split(separator: "\n") {
+            let parts = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count >= 1, !parts[0].isEmpty else { continue }
+            let url = dir.appendingPathComponent(parts[0])
+            guard let text = (try? String(contentsOf: url, encoding: .utf8)) ?? (try? String(contentsOf: url, encoding: .isoLatin1)),
+                  !text.isEmpty else { continue }
+            out.append([
+                "file": parts[0],
+                "lang": parts.count > 1 ? parts[1] : "",
+                "title": parts.count > 2 ? parts[2] : "",
+                "text": text,
+            ])
+        }
+        return out
+    }
+
+    private func openInPage(_ file: URL, name: String, subs: [[String: String]]) {
+        let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
+        let info: [String: Any] = [
+            "url": "\(LocalSchemeHandler.scheme)://app/media/\(file.lastPathComponent)",
+            "name": name,
+            "size": size,
+            "subs": subs,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: info),
+              let json = String(data: data, encoding: .utf8) else { return }
+        print("KADR-NATIVE: open \(file.lastPathComponent) (\(size) bytes, \(subs.count) subtitle tracks)")
+        DispatchQueue.main.async {
+            self.webView?.evaluateJavaScript("window.kadrNativeOpen(\(json))")
         }
     }
 
