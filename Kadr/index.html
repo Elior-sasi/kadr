@@ -491,17 +491,20 @@ header .file-btn{min-height:44px;padding:4px 14px;background:var(--panel);color:
   function isSubName(n){return /\.(srt|vtt|ass|ssa|sub|txt)$/i.test(n);}
   function loadVideo(f){
     if(!f)return;
-    saveState();
-    errorBox.hidden=true;scanToken++;
     if(objectUrl)URL.revokeObjectURL(objectUrl);
     objectUrl=URL.createObjectURL(f);
-    fileKey="fp:"+f.name+":"+f.size;
+    loadVideoSrc(objectUrl,f.name,f.size);
+  }
+  function loadVideoSrc(src,name,size){
+    saveState();
+    errorBox.hidden=true;scanToken++;
+    fileKey="fp:"+name+":"+size;
     detectedFps=null;diffs=[];lastMediaTime=null;targetFrame=null;loopA=loopB=null;
     var saved=store.get(fileKey)||{};
     marks=Array.isArray(saved.marks)?saved.marks:[];
     resumeAt=typeof saved.t==="number"?saved.t:0;
     updateAutoLabel();applyFps();
-    video.src=objectUrl;video.load();
+    video.src=src;video.load();
     s=1;tx=0;ty=0;applyTransform();renderMarks();renderLoop();
   }
   var resumeAt=0;
@@ -525,7 +528,7 @@ header .file-btn{min-height:44px;padding:4px 14px;background:var(--panel);color:
   });
   video.addEventListener("error",function(){
     if(!video.getAttribute("src"))return;
-    errorBox.textContent="לא הצלחתי לפתוח את הקובץ הזה. כדאי לנסות סרטון בפורמט MP4 או MOV.";
+    errorBox.textContent="לא הצלחתי לנגן את הקובץ הזה. האייפון מנגן MP4, MOV ו-M4V. קובצי MKV ו-AVI לא נתמכים.";
     errorBox.hidden=false;
   });
   function saveState(){if(fileKey&&video.duration)store.set(fileKey,{t:video.currentTime,marks:marks});}
@@ -1012,6 +1015,43 @@ header .file-btn{min-height:44px;padding:4px 14px;background:var(--panel);color:
   video.addEventListener("seeked",function(){
     if(jogOn&&frameAt(video.currentTime)!==jogTarget)video.currentTime=frameMid(jogTarget);
   });
+
+
+  /* ---------- inside the iPhone app: native picker ---------- */
+  var nativeBridge=(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.kadr)||null;
+  function nativeLog(t){if(nativeBridge)try{nativeBridge.postMessage({action:"log",text:String(t)});}catch(e){}}
+  if(nativeBridge){
+    ["file","file2"].forEach(function(id){
+      $(id).addEventListener("click",function(e){
+        e.preventDefault();
+        try{nativeBridge.postMessage({action:"pickVideo"});}catch(err){}
+      });
+    });
+  }
+  window.kadrNativeBusy=function(on){if(on)say("מכין את הסרטון...",30000);};
+  window.kadrNativeError=function(msg){toast.textContent="";errorBox.textContent=msg;errorBox.hidden=false;};
+  window.kadrNativeOpen=function(info){
+    toast.textContent="";
+    if(objectUrl){URL.revokeObjectURL(objectUrl);objectUrl=null;}
+    loadVideoSrc(info.url,info.name,info.size);
+  };
+  video.addEventListener("loadedmetadata",function(){nativeLog("loaded "+video.videoWidth+"x"+video.videoHeight+" "+video.duration.toFixed(3)+"s");});
+  video.addEventListener("error",function(){nativeLog("video error "+(video.error&&video.error.code)+" "+(video.error&&video.error.message));});
+  window.__kadrSelfTest=function(){
+    function wait(ms){return new Promise(function(r){setTimeout(r,ms);});}
+    video.addEventListener("loadedmetadata",async function(){
+      try{
+        await wait(800);
+        stepFrame(1,false);await wait(700);stepFrame(1,false);await wait(700);
+        nativeLog("after 2 steps: "+frameText.textContent+" t="+video.currentTime.toFixed(3));
+        try{sig();nativeLog("canvas read ok");}catch(e){nativeLog("canvas read FAILED "+e);}
+        var p=video.play();if(p&&p.then)await p.catch(function(e){nativeLog("play rejected "+e);});
+        await wait(1500);video.pause();
+        nativeLog("after play: t="+video.currentTime.toFixed(3));
+        nativeLog("SELFTEST DONE");
+      }catch(e){nativeLog("SELFTEST ERROR "+e);}
+    },{once:true});
+  };
 
   /* ---------- keyboard ---------- */
   document.addEventListener("keydown",function(e){
